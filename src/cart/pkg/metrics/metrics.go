@@ -9,13 +9,13 @@ import (
 
 // Metrics holds the 7 standard benchmark & operational metrics.
 type Metrics struct {
-	SQSMessagesPublished  *prometheus.CounterVec
-	TasksProcessed        *prometheus.CounterVec
-	TaskDuration          *prometheus.HistogramVec
-	JobQueueWait          *prometheus.HistogramVec
-	JobE2ELatency         *prometheus.HistogramVec
-	ColdStartTimestamp    *prometheus.GaugeVec
-	InFlightTasks         *prometheus.GaugeVec
+	SQSMessagesPublished *prometheus.CounterVec
+	TasksProcessed       *prometheus.CounterVec
+	TaskDuration         *prometheus.HistogramVec
+	JobQueueWait         *prometheus.HistogramVec
+	JobE2ELatency        *prometheus.HistogramVec
+	ColdStartTimestamp   *prometheus.GaugeVec
+	InFlightTasks        *prometheus.GaugeVec
 }
 
 var (

@@ -468,3 +468,165 @@ func TestPostgresStoreWithSqlmock(t *testing.T) {
 	// Verify all mock expectations were met
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestLoadConfig(t *testing.T) {
+	t.Run("default values", func(t *testing.T) {
+		t.Setenv("APP_MODE", "")
+		t.Setenv("PORT", "")
+		t.Setenv("SERVICE_NAME", "")
+		t.Setenv("SQS_QUEUE_NAME", "")
+		t.Setenv("SQS_QUEUE_URL", "")
+		t.Setenv("SQS_MAX_MESSAGES", "")
+		t.Setenv("WORKER_CONCURRENCY", "")
+		t.Setenv("WORKER_DB_MODE", "")
+		t.Setenv("AWS_REGION", "")
+		t.Setenv("AWS_ENDPOINT_URL", "")
+		t.Setenv("LOCALSTACK_ENDPOINT", "")
+
+		cfg := loadConfig()
+		assert.Equal(t, "api", cfg.AppMode)
+		assert.Equal(t, "8080", cfg.Port)
+		assert.Equal(t, "cart", cfg.Service)
+		assert.Equal(t, "cart-queue", cfg.QueueName)
+		assert.Equal(t, "http://localhost:4566/000000000000/cart-queue", cfg.QueueURL)
+		assert.Equal(t, int32(1), cfg.MaxMessages)
+		assert.Equal(t, 1, cfg.WorkerConcurrency)
+		assert.Equal(t, "light", cfg.DBMode)
+		assert.Equal(t, "us-east-1", cfg.AWSRegion)
+		assert.Equal(t, "", cfg.AWSEndpointURL)
+	})
+
+	t.Run("custom environment variables", func(t *testing.T) {
+		t.Setenv("APP_MODE", "worker")
+		t.Setenv("PORT", "9090")
+		t.Setenv("SERVICE_NAME", "custom-cart")
+		t.Setenv("SQS_QUEUE_NAME", "custom-queue")
+		t.Setenv("SQS_QUEUE_URL", "https://sqs.us-west-2.amazonaws.com/12345/custom-queue")
+		t.Setenv("SQS_MAX_MESSAGES", "8")
+		t.Setenv("WORKER_CONCURRENCY", "4")
+		t.Setenv("WORKER_DB_MODE", "full")
+		t.Setenv("AWS_REGION", "us-west-2")
+		t.Setenv("LOCALSTACK_ENDPOINT", "http://localhost:4566")
+
+		cfg := loadConfig()
+		assert.Equal(t, "worker", cfg.AppMode)
+		assert.Equal(t, "9090", cfg.Port)
+		assert.Equal(t, "custom-cart", cfg.Service)
+		assert.Equal(t, "custom-queue", cfg.QueueName)
+		assert.Equal(t, "https://sqs.us-west-2.amazonaws.com/12345/custom-queue", cfg.QueueURL)
+		assert.Equal(t, int32(8), cfg.MaxMessages)
+		assert.Equal(t, 4, cfg.WorkerConcurrency)
+		assert.Equal(t, "full", cfg.DBMode)
+		assert.Equal(t, "us-west-2", cfg.AWSRegion)
+		assert.Equal(t, "http://localhost:4566", cfg.AWSEndpointURL)
+
+		// AWS_ENDPOINT_URL takes precedence over LOCALSTACK_ENDPOINT
+		t.Setenv("AWS_ENDPOINT_URL", "http://custom-endpoint:4566")
+		cfg = loadConfig()
+		assert.Equal(t, "http://custom-endpoint:4566", cfg.AWSEndpointURL)
+
+		// Invalid SQS_MAX_MESSAGES falls back to default 1
+		t.Setenv("SQS_MAX_MESSAGES", "99")
+		cfg = loadConfig()
+		assert.Equal(t, int32(1), cfg.MaxMessages)
+
+		// Invalid WORKER_CONCURRENCY falls back to default 1
+		t.Setenv("WORKER_CONCURRENCY", "0")
+		cfg = loadConfig()
+		assert.Equal(t, 1, cfg.WorkerConcurrency)
+	})
+}
+
+func TestCartRoutesEdgeCases(t *testing.T) {
+	// 1. GET /carts/user-1/merge without sessionId query param -> 400 Bad Request
+	_, _, router, _ := setupTestApp()
+
+	req := httptest.NewRequest(http.MethodGet, "/carts/user-1/merge", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "sessionId query parameter required")
+
+	// 2. POST /carts/user-1/items with invalid JSON -> 400 Bad Request
+	req = httptest.NewRequest(http.MethodPost, "/carts/user-1/items", bytes.NewBufferString("not-a-valid-json"))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// 3. PATCH /carts/user-1/items with invalid JSON -> 400 Bad Request
+	req = httptest.NewRequest(http.MethodPatch, "/carts/user-1/items", bytes.NewBufferString("not-a-valid-json"))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// 4. PATCH /carts/user-1/items for non-existent item -> 404 Not Found
+	nonExistentItem, _ := json.Marshal(model.Item{
+		ItemID:    "item-does-not-exist",
+		Quantity:  1,
+		UnitPrice: 100,
+	})
+	req = httptest.NewRequest(http.MethodPatch, "/carts/user-1/items", bytes.NewBuffer(nonExistentItem))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, w.Body.String(), "item not found")
+
+	// 5. SetupRouter in AppMode: "worker" -> /health returns 200, /carts/user-1 returns 404
+	workerCfg := AppConfig{
+		AppMode: "worker",
+		Port:    "8080",
+		Service: "cart",
+	}
+	st := store.NewMemoryStore()
+	reg := prometheus.NewRegistry()
+	m := metrics.NewMetrics(reg)
+	cc := chaos.NewController()
+	workerRouter := SetupRouter(st, nil, workerCfg, m, cc)
+
+	req = httptest.NewRequest(http.MethodGet, "/health", nil)
+	w = httptest.NewRecorder()
+	workerRouter.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	req = httptest.NewRequest(http.MethodGet, "/carts/user-1", nil)
+	w = httptest.NewRecorder()
+	workerRouter.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	// 6. POST /jobs when sqsClient is nil -> 500 Internal Server Error
+	apiCfg := AppConfig{
+		AppMode:   "api",
+		Port:      "8080",
+		Service:   "cart",
+		QueueName: "cart-queue",
+		QueueURL:  "http://test-queue/cart-queue",
+	}
+	nilSqsRouter := SetupRouter(st, nil, apiCfg, m, cc)
+
+	jobReq, _ := json.Marshal(model.JobRequest{
+		BatchSize: 1,
+		WorkUnits: 10,
+		DBMode:    "light",
+	})
+	req = httptest.NewRequest(http.MethodPost, "/jobs", bytes.NewBuffer(jobReq))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	nilSqsRouter.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "sqs client not available")
+}
+
+func TestInitStore(t *testing.T) {
+	t.Run("default to MemoryStore", func(t *testing.T) {
+		t.Setenv("RETAIL_CART_PERSISTENCE_PROVIDER", "")
+		t.Setenv("DB_HOST", "")
+		t.Setenv("DATABASE_URL", "")
+
+		st, err := InitStore()
+		require.NoError(t, err)
+		assert.IsType(t, &store.MemoryStore{}, st)
+	})
+}

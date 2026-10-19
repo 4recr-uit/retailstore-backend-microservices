@@ -92,6 +92,47 @@ class SQSService:
         SQS_MESSAGES_PUBLISHED_TOTAL.labels(service="checkout", queue=self.queue_name).inc(count)
         return count
 
+    def receive_messages(self, max_messages: int = 1, wait_time_seconds: int = 20) -> list[dict[str, Any]]:
+        if not self.queue_url or not self.client:
+            return []
+        try:
+            response = self.client.receive_message(
+                QueueUrl=self.queue_url,
+                MaxNumberOfMessages=max_messages,
+                WaitTimeSeconds=wait_time_seconds,
+            )
+            return response.get("Messages", [])
+        except Exception as exc:
+            logger.error("SQS receive_message error: %s", exc)
+            return []
+
+    def delete_message(self, receipt_handle: str) -> bool:
+        if not self.queue_url or not self.client or not receipt_handle:
+            return False
+        try:
+            self.client.delete_message(
+                QueueUrl=self.queue_url,
+                ReceiptHandle=receipt_handle,
+            )
+            return True
+        except Exception as exc:
+            logger.error("SQS delete_message error: %s", exc)
+            return False
+
+    def reset_visibility(self, receipt_handle: str, visibility_timeout: int = 0) -> bool:
+        if not self.queue_url or not self.client or not receipt_handle:
+            return False
+        try:
+            self.client.change_message_visibility(
+                QueueUrl=self.queue_url,
+                ReceiptHandle=receipt_handle,
+                VisibilityTimeout=visibility_timeout,
+            )
+            return True
+        except Exception as exc:
+            logger.warning("Failed to reset visibility timeout: %s", exc)
+            return False
+
 
 def create_sqs_service() -> SQSService:
     settings = get_settings()
@@ -256,11 +297,8 @@ class CheckoutWorker:
             logger.info(json.dumps(log_entry))
 
             receipt_handle = message.get("ReceiptHandle")
-            if receipt_handle and self.sqs_service.client and self.sqs_service.queue_url:
-                self.sqs_service.client.delete_message(
-                    QueueUrl=self.sqs_service.queue_url,
-                    ReceiptHandle=receipt_handle,
-                )
+            if receipt_handle:
+                self.sqs_service.delete_message(receipt_handle)
         except Exception as exc:
             WORKER_TASKS_PROCESSED_TOTAL.labels(
                 service="checkout",
@@ -278,15 +316,8 @@ class CheckoutWorker:
             if self.shutdown_event.is_set():
                 # Graceful shutdown: immediately release unstarted messages back to queue
                 receipt = msg.get("ReceiptHandle")
-                if receipt and self.sqs_service.client and self.sqs_service.queue_url:
-                    try:
-                        self.sqs_service.client.change_message_visibility(
-                            QueueUrl=self.sqs_service.queue_url,
-                            ReceiptHandle=receipt,
-                            VisibilityTimeout=0,
-                        )
-                    except Exception as e:
-                        logger.warning("Failed to reset visibility timeout: %s", e)
+                if receipt:
+                    self.sqs_service.reset_visibility(receipt, 0)
                 continue
 
             if self.executor:
@@ -298,18 +329,12 @@ class CheckoutWorker:
         if not self.sqs_service.queue_url or not self.sqs_service.client:
             return
 
-        try:
-            response = self.sqs_service.client.receive_message(
-                QueueUrl=self.sqs_service.queue_url,
-                MaxNumberOfMessages=self.max_messages,
-                WaitTimeSeconds=self.wait_time_seconds,
-            )
-            messages = response.get("Messages", [])
-            if messages:
-                self._process_batch(messages)
-        except Exception as exc:
-            if not self.shutdown_event.is_set():
-                logger.error("SQS polling error: %s", exc)
+        messages = self.sqs_service.receive_messages(
+            max_messages=self.max_messages,
+            wait_time_seconds=self.wait_time_seconds,
+        )
+        if messages:
+            self._process_batch(messages)
 
     def _run_loop(self) -> None:
         while not self.shutdown_event.is_set():

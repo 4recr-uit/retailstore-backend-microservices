@@ -6,8 +6,14 @@ from typing import Any
 
 
 def get_persistence_config() -> dict[str, Any]:
-    provider_env = os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_PROVIDER", "").strip().lower()
-    endpoint = os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_ENDPOINT", "").strip()
+    provider_env = (
+        os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_PROVIDER")
+        or os.getenv("RETAIL_CATALOG_PERSISTENCE_PROVIDER", "")
+    ).strip().lower()
+    endpoint = (
+        os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_ENDPOINT")
+        or os.getenv("RETAIL_CATALOG_PERSISTENCE_ENDPOINT", "")
+    ).strip()
     db_host = os.getenv("DB_HOST", "").strip()
     db_port = os.getenv("DB_PORT", "3306").strip()
 
@@ -24,10 +30,28 @@ def get_persistence_config() -> dict[str, Any]:
     if provider == "mysql" and not endpoint:
         endpoint = "localhost:3306"
 
-    db_name = os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_DB_NAME") or os.getenv("DB_NAME", "catalogdb")
-    db_user = os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_USER") or os.getenv("DB_USER", "catalog_user")
-    db_password = os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_PASSWORD") or os.getenv("DB_PASSWORD", "")
-    connect_timeout = int(os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_CONNECT_TIMEOUT", "5"))
+    db_name = (
+        os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_DB_NAME")
+        or os.getenv("RETAIL_CATALOG_PERSISTENCE_DB_NAME")
+        or os.getenv("DB_NAME", "catalogdb")
+    )
+    db_user = (
+        os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_USER")
+        or os.getenv("RETAIL_CATALOG_PERSISTENCE_USER")
+        or os.getenv("DB_USER", "catalog_user")
+    )
+    db_password = (
+        os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_PASSWORD")
+        or os.getenv("RETAIL_CATALOG_PERSISTENCE_PASSWORD")
+        or os.getenv("DB_PASSWORD", "")
+    )
+    try:
+        connect_timeout = int(
+            os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_CONNECT_TIMEOUT")
+            or os.getenv("RETAIL_CATALOG_PERSISTENCE_CONNECT_TIMEOUT", "5")
+        )
+    except ValueError:
+        connect_timeout = 5
 
     return {
         "provider": provider,

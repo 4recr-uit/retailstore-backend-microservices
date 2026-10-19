@@ -2,29 +2,41 @@
   "name": "checkout",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "projectType": "application",
+  "sourceRoot": "src/checkout",
   "targets": {
     "install": {
       "executor": "nx:run-commands",
       "options": {
         "cwd": "src/checkout",
-        "command": "yarn install"
+        "command": "python3 -m venv .venv && .venv/bin/pip install --quiet -r requirements.txt"
       }
     },
     "build": {
-      "dependsOn": ["install"]
+      "executor": "nx:run-commands",
+      "dependsOn": ["install"],
+      "options": {
+        "command": "python3 -m py_compile main.py test_main.py app/*.py"
+      }
     },
     "test": {
-      "dependsOn": ["build"]
+      "executor": "nx:run-commands",
+      "dependsOn": ["build"],
+      "options": {
+        "command": ".venv/bin/python -m unittest discover -v"
+      }
     },
     "test:integration": {
-      "dependsOn": ["test"]
+      "executor": "nx:run-commands",
+      "dependsOn": ["test"],
+      "options": {
+        "command": ".venv/bin/python -m unittest discover -v"
+      }
     },
     "lint": {
       "executor": "nx:run-commands",
       "dependsOn": ["install"],
-
       "options": {
-        "command": "yarn lint"
+        "command": "python3 -m py_compile main.py test_main.py app/*.py"
       }
     },
     "manifest": {},

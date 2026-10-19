@@ -39,14 +39,14 @@ type JobMessage struct {
 }
 
 type Worker struct {
-	cfg          *config.Config
-	repo         db.Repository
-	sqsClient    SQSClient
-	queueURL     string
-	queueName    string
-	serviceName  string
-	maxMessages  int
-	concurrency  int
+	cfg           *config.Config
+	repo          db.Repository
+	sqsClient     SQSClient
+	queueURL      string
+	queueName     string
+	serviceName   string
+	maxMessages   int
+	concurrency   int
 	defaultDBMode string
 
 	firstJobFlag atomic.Bool

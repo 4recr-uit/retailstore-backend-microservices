@@ -8,7 +8,8 @@ helmfile = "1.2"
 awscli = "latest"
 jq = "latest"
 maven = "3.9"
-go = "1.25"
+go = "1.26"
+python = "3.12"
 tflint = "latest"
 
 [tools."ubi:kubernetes-sigs/kind"]

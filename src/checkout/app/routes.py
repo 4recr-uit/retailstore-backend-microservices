@@ -8,7 +8,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.config import get_settings
@@ -205,14 +205,26 @@ async def create_jobs(job_req: JobRequest, request: Request):
     return {"enqueued": job_req.batchSize, "jobIds": job_ids}
 
 
-@api_router.get("/health", response_class=PlainTextResponse, tags=["system"])
+system_router = APIRouter()
+
+
+@system_router.get("/health", response_class=PlainTextResponse, tags=["system"])
 def health(request: Request):
     if not request.app.state.chaos.is_healthy:
         return PlainTextResponse("Unhealthy", status_code=500)
     return PlainTextResponse("OK", status_code=200)
 
 
-@api_router.get("/topology", tags=["system"])
+@system_router.get("/actuator/health", tags=["system"])
+@system_router.get("/actuator/health/liveness", tags=["system"])
+@system_router.get("/actuator/health/readiness", tags=["system"])
+def actuator_health(request: Request):
+    if not request.app.state.chaos.is_healthy:
+        return JSONResponse(status_code=503, content={"status": "DOWN"})
+    return JSONResponse(status_code=200, content={"status": "UP"})
+
+
+@system_router.get("/topology", tags=["system"])
 def topology(request: Request):
     return {
         "service": "checkout",
@@ -222,6 +234,6 @@ def topology(request: Request):
     }
 
 
-@api_router.get("/metrics", tags=["system"])
+@system_router.get("/metrics", tags=["system"])
 def metrics():
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)

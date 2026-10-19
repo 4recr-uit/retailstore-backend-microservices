@@ -3,9 +3,10 @@
 
 import json
 import logging
+import os
 import time
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -15,8 +16,11 @@ from main import (
     InMemoryCheckoutRepository,
     PostgresCheckoutRepository,
     SQSService,
+    Settings,
     burn_cpu,
     create_app,
+    create_repository,
+    get_settings,
     make_id,
 )
 
@@ -434,6 +438,424 @@ class TestPostgresRepositorySchema(unittest.TestCase):
         self.assertIn("CREATE SCHEMA IF NOT EXISTS checkout", sql_called)
         self.assertIn("CREATE TABLE IF NOT EXISTS checkout.checkout_sessions", sql_called)
         self.assertIn("CREATE TABLE IF NOT EXISTS checkout.processed_jobs", sql_called)
+
+    def test_get_session(self):
+        mock_engine = MagicMock()
+        mock_conn = MagicMock()
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+        mock_engine.begin.return_value.__enter__.return_value = MagicMock()
+
+        repo = PostgresCheckoutRepository(engine=mock_engine)
+
+        # 1. When row is None -> returns None
+        mock_conn.execute.return_value.fetchone.return_value = None
+        self.assertIsNone(repo.get_session("user-none"))
+
+        # 2. When row[0] is a JSON string -> returns parsed dict
+        mock_conn.execute.return_value.fetchone.return_value = ('{"subtotal": 100, "items": []}',)
+        result = repo.get_session("user-json")
+        self.assertEqual(result, {"subtotal": 100, "items": []})
+
+        # 3. When row[0] is already a dict -> returns dict
+        mock_conn.execute.return_value.fetchone.return_value = ({"subtotal": 200, "items": ["item1"]},)
+        result2 = repo.get_session("user-dict")
+        self.assertEqual(result2, {"subtotal": 200, "items": ["item1"]})
+
+    def test_save_session(self):
+        mock_engine = MagicMock()
+        mock_conn = MagicMock()
+        mock_engine.begin.return_value.__enter__.return_value = mock_conn
+
+        repo = PostgresCheckoutRepository(engine=mock_engine)
+        mock_conn.reset_mock()
+
+        data = {"subtotal": 150, "tax": 5}
+        repo.save_session("user-123", data)
+
+        mock_conn.execute.assert_called_once()
+        stmt_called, params_called = mock_conn.execute.call_args[0]
+        sql_text = str(stmt_called)
+        self.assertIn("INSERT INTO checkout.checkout_sessions", sql_text)
+        self.assertIn("ON CONFLICT", sql_text)
+        self.assertEqual(params_called["cid"], "user-123")
+        self.assertEqual(json.loads(params_called["data"]), data)
+
+    def test_delete_session(self):
+        mock_engine = MagicMock()
+        mock_conn = MagicMock()
+        mock_engine.begin.return_value.__enter__.return_value = mock_conn
+
+        repo = PostgresCheckoutRepository(engine=mock_engine)
+        mock_res = MagicMock()
+        mock_conn.execute.return_value = mock_res
+
+        # rowcount == 1 -> returns True
+        mock_res.rowcount = 1
+        self.assertTrue(repo.delete_session("user-123"))
+        stmt_called, params_called = mock_conn.execute.call_args[0]
+        self.assertIn("DELETE FROM checkout.checkout_sessions", str(stmt_called))
+        self.assertEqual(params_called["cid"], "user-123")
+
+        # rowcount == 0 -> returns False
+        mock_res.rowcount = 0
+        self.assertFalse(repo.delete_session("user-unknown"))
+
+    def test_record_processed_job(self):
+        mock_engine = MagicMock()
+        mock_conn = MagicMock()
+        mock_engine.begin.return_value.__enter__.return_value = mock_conn
+
+        repo = PostgresCheckoutRepository(engine=mock_engine)
+        mock_res = MagicMock()
+        mock_conn.execute.return_value = mock_res
+
+        # rowcount == 1 -> returns True
+        mock_res.rowcount = 1
+        result = repo.record_processed_job(
+            job_id="job-1",
+            order_id="order-1",
+            customer_id="cust-1",
+            status_val="COMPLETED",
+            data={"workUnits": 5},
+        )
+        self.assertTrue(result)
+        stmt_called, params_called = mock_conn.execute.call_args[0]
+        self.assertIn("INSERT INTO checkout.processed_jobs", str(stmt_called))
+        self.assertIn("ON CONFLICT (job_id) DO NOTHING", str(stmt_called))
+        self.assertEqual(params_called["jid"], "job-1")
+        self.assertEqual(params_called["oid"], "order-1")
+        self.assertEqual(params_called["cid"], "cust-1")
+        self.assertEqual(params_called["status"], "COMPLETED")
+        self.assertEqual(json.loads(params_called["data"]), {"workUnits": 5})
+
+        # rowcount == 0 -> duplicate, returns False
+        mock_res.rowcount = 0
+        self.assertFalse(
+            repo.record_processed_job(
+                job_id="job-1",
+                order_id="order-1",
+                customer_id="cust-1",
+                status_val="COMPLETED",
+                data=None,
+            )
+        )
+
+    def test_create_repository_default(self):
+        with patch.dict(os.environ, {}, clear=True):
+            repo = create_repository()
+            self.assertIsInstance(repo, InMemoryCheckoutRepository)
+            self.assertEqual(repo.provider, "in-memory")
+
+    def test_create_repository_postgres_url_normalization(self):
+        env = {"DATABASE_URL": "postgres://user:pass@host:5432/db"}
+        with patch.dict(os.environ, env, clear=True):
+            with patch("app.repository.create_engine") as mock_ce:
+                mock_engine = MagicMock()
+                mock_ce.return_value = mock_engine
+                repo = create_repository()
+                self.assertIsInstance(repo, PostgresCheckoutRepository)
+                mock_ce.assert_called_once()
+                called_url = mock_ce.call_args[0][0]
+                self.assertEqual(called_url, "postgresql://user:pass@host:5432/db")
+
+    def test_create_repository_fallback_on_exception(self):
+        env = {"DATABASE_URL": "postgres://user:pass@host:5432/db"}
+        # Case 1: create_engine raises exception
+        with patch.dict(os.environ, env, clear=True):
+            with patch("app.repository.create_engine", side_effect=Exception("Connection refused")):
+                repo = create_repository()
+                self.assertIsInstance(repo, InMemoryCheckoutRepository)
+
+        # Case 2: _init_db raises exception
+        with patch.dict(os.environ, env, clear=True):
+            with patch("app.repository.create_engine") as mock_ce:
+                mock_engine = MagicMock()
+                mock_engine.begin.side_effect = Exception("Migration failed")
+                mock_ce.return_value = mock_engine
+                repo = create_repository()
+                self.assertIsInstance(repo, InMemoryCheckoutRepository)
+
+
+class TestConfigSettings(unittest.TestCase):
+    def test_sqs_max_messages_clamping(self):
+        # 0 -> 1
+        with patch.dict(os.environ, {"SQS_MAX_MESSAGES": "0"}, clear=True):
+            self.assertEqual(get_settings().sqs_max_messages, 1)
+        # 99 -> 10
+        with patch.dict(os.environ, {"SQS_MAX_MESSAGES": "99"}, clear=True):
+            self.assertEqual(get_settings().sqs_max_messages, 10)
+        # "invalid" -> 1
+        with patch.dict(os.environ, {"SQS_MAX_MESSAGES": "invalid"}, clear=True):
+            self.assertEqual(get_settings().sqs_max_messages, 1)
+        # "5" -> 5
+        with patch.dict(os.environ, {"SQS_MAX_MESSAGES": "5"}, clear=True):
+            self.assertEqual(get_settings().sqs_max_messages, 5)
+
+        # Also test Settings constructor directly
+        self.assertEqual(Settings(sqs_max_messages=0).sqs_max_messages, 1)
+        self.assertEqual(Settings(sqs_max_messages=99).sqs_max_messages, 10)
+        self.assertEqual(Settings(sqs_max_messages="invalid").sqs_max_messages, 1)
+        self.assertEqual(Settings(sqs_max_messages="5").sqs_max_messages, 5)
+
+    def test_worker_concurrency_clamping(self):
+        # 0 -> 1
+        with patch.dict(os.environ, {"WORKER_CONCURRENCY": "0"}, clear=True):
+            self.assertEqual(get_settings().worker_concurrency, 1)
+        # "invalid" -> 1
+        with patch.dict(os.environ, {"WORKER_CONCURRENCY": "invalid"}, clear=True):
+            self.assertEqual(get_settings().worker_concurrency, 1)
+        # "4" -> 4
+        with patch.dict(os.environ, {"WORKER_CONCURRENCY": "4"}, clear=True):
+            self.assertEqual(get_settings().worker_concurrency, 4)
+
+        # Also test Settings constructor directly
+        self.assertEqual(Settings(worker_concurrency=0).worker_concurrency, 1)
+        self.assertEqual(Settings(worker_concurrency="invalid").worker_concurrency, 1)
+        self.assertEqual(Settings(worker_concurrency="4").worker_concurrency, 4)
+
+    def test_queue_name_extraction(self):
+        with patch.dict(
+            os.environ,
+            {"SQS_QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/123456789012/my-test-queue"},
+            clear=True,
+        ):
+            self.assertEqual(get_settings().queue_name, "my-test-queue")
+
+        with patch.dict(
+            os.environ,
+            {"SQS_QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/123456789012/my-test-queue/"},
+            clear=True,
+        ):
+            self.assertEqual(get_settings().queue_name, "my-test-queue")
+
+        with patch.dict(
+            os.environ,
+            {"SQS_QUEUE_URL": "", "SQS_QUEUE_NAME": "custom-queue"},
+            clear=True,
+        ):
+            self.assertEqual(get_settings().queue_name, "custom-queue")
+
+    def test_persistence_provider_resolution(self):
+        # Empty env -> in-memory
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(get_settings().persistence_provider, "in-memory")
+
+        # DB_HOST set -> postgres
+        with patch.dict(os.environ, {"DB_HOST": "postgres.local"}, clear=True):
+            self.assertEqual(get_settings().persistence_provider, "postgres")
+
+        # DATABASE_URL set -> postgres
+        with patch.dict(os.environ, {"DATABASE_URL": "postgres://user:pass@host/db"}, clear=True):
+            self.assertEqual(get_settings().persistence_provider, "postgres")
+
+        # Explicit RETAIL_CHECKOUT_PERSISTENCE_PROVIDER="in-memory" overrides DB_HOST
+        with patch.dict(
+            os.environ,
+            {"RETAIL_CHECKOUT_PERSISTENCE_PROVIDER": "in-memory", "DB_HOST": "postgres.local"},
+            clear=True,
+        ):
+            self.assertEqual(get_settings().persistence_provider, "in-memory")
+
+        # Explicit RETAIL_CHECKOUT_PERSISTENCE_PROVIDER="postgres"
+        with patch.dict(
+            os.environ,
+            {"RETAIL_CHECKOUT_PERSISTENCE_PROVIDER": "postgres"},
+            clear=True,
+        ):
+            self.assertEqual(get_settings().persistence_provider, "postgres")
+
+
+class TestChaosAndActuatorEndpoints(unittest.TestCase):
+    def setUp(self):
+        self.repo = InMemoryCheckoutRepository()
+        self.mock_sqs_client = MagicMock()
+        self.sqs = SQSService(
+            queue_url="http://localhost:4566/000000000000/checkout-queue",
+            client=self.mock_sqs_client,
+        )
+        self.chaos = ChaosController()
+        self.app = create_app(
+            repository=self.repo,
+            sqs_service=self.sqs,
+            chaos=self.chaos,
+            app_mode="api",
+        )
+        self.client = TestClient(self.app)
+
+    def test_actuator_health_endpoints_healthy(self):
+        endpoints = ["/actuator/health", "/actuator/health/liveness", "/actuator/health/readiness"]
+        for ep in endpoints:
+            resp = self.client.get(ep)
+            self.assertEqual(resp.status_code, 200, f"Expected 200 for {ep}")
+            self.assertEqual(resp.json(), {"status": "UP"})
+
+    def test_actuator_health_endpoints_unhealthy_via_chaos(self):
+        # Toggle chaos health off
+        post_resp = self.client.post("/chaos/health")
+        self.assertEqual(post_resp.status_code, 200)
+
+        endpoints = ["/actuator/health", "/actuator/health/liveness", "/actuator/health/readiness"]
+        for ep in endpoints:
+            resp = self.client.get(ep)
+            self.assertEqual(resp.status_code, 503, f"Expected 503 for {ep}")
+            self.assertEqual(resp.json(), {"status": "DOWN"})
+
+        # Toggle back to healthy
+        del_resp = self.client.delete("/chaos/health")
+        self.assertEqual(del_resp.status_code, 200)
+
+        for ep in endpoints:
+            resp = self.client.get(ep)
+            self.assertEqual(resp.status_code, 200, f"Expected 200 for {ep}")
+            self.assertEqual(resp.json(), {"status": "UP"})
+
+    def test_invalid_chaos_inputs(self):
+        # Status code < 100 -> 400
+        resp_99 = self.client.post("/chaos/status/99")
+        self.assertEqual(resp_99.status_code, 400)
+
+        # Status code > 599 -> 400
+        resp_600 = self.client.post("/chaos/status/600")
+        self.assertEqual(resp_600.status_code, 400)
+
+        # Latency < 0 -> 400
+        resp_neg = self.client.post("/chaos/latency/-5")
+        self.assertEqual(resp_neg.status_code, 400)
+
+    def test_worker_mode_router_isolation(self):
+        worker_app = create_app(
+            repository=self.repo,
+            sqs_service=self.sqs,
+            chaos=self.chaos,
+            app_mode="worker",
+        )
+        worker_client = TestClient(worker_app)
+
+        # System and chaos endpoints return 200
+        self.assertEqual(worker_client.get("/health").status_code, 200)
+        self.assertEqual(worker_client.get("/topology").status_code, 200)
+        self.assertEqual(worker_client.get("/metrics").status_code, 200)
+        self.assertEqual(worker_client.get("/chaos/status").status_code, 200)
+        self.assertEqual(worker_client.get("/actuator/health").status_code, 200)
+
+        # API endpoint returns 404 because api_router is not mounted in worker mode
+        self.assertEqual(worker_client.get("/checkout/user-1").status_code, 404)
+        self.assertEqual(worker_client.post("/jobs", json={"workUnits": 10}).status_code, 404)
+
+
+class TestSQSServiceUnit(unittest.TestCase):
+    def test_publish_single_empty_queue_url_or_client(self):
+        # Empty queue_url
+        sqs_empty_url = SQSService(queue_url="", client=MagicMock())
+        self.assertFalse(sqs_empty_url.publish_single({"jobId": "test"}))
+
+        # None client
+        sqs_none_client = SQSService(queue_url="http://queue", client=None)
+        self.assertFalse(sqs_none_client.publish_single({"jobId": "test"}))
+
+    def test_publish_batch_empty_queue_url_or_empty_messages(self):
+        # Empty queue_url
+        sqs_empty_url = SQSService(queue_url="", client=MagicMock())
+        self.assertEqual(sqs_empty_url.publish_batch([{"jobId": "1"}]), 0)
+
+        # None client
+        sqs_none_client = SQSService(queue_url="http://queue", client=None)
+        self.assertEqual(sqs_none_client.publish_batch([{"jobId": "1"}]), 0)
+
+        # Empty messages list
+        sqs_empty_msgs = SQSService(queue_url="http://queue", client=MagicMock())
+        self.assertEqual(sqs_empty_msgs.publish_batch([]), 0)
+
+    def test_receive_messages_empty_queue_url_or_client(self):
+        # Empty queue_url
+        sqs_empty_url = SQSService(queue_url="", client=MagicMock())
+        self.assertEqual(sqs_empty_url.receive_messages(), [])
+
+        # None client
+        sqs_none_client = SQSService(queue_url="http://queue", client=None)
+        self.assertEqual(sqs_none_client.receive_messages(), [])
+
+    def test_receive_messages_client_exception(self):
+        mock_client = MagicMock()
+        mock_client.receive_message.side_effect = Exception("SQS network error")
+        sqs = SQSService(queue_url="http://queue", client=mock_client)
+        # Should catch exception, log it, and return empty list without crashing
+        result = sqs.receive_messages()
+        self.assertEqual(result, [])
+
+    def test_receive_messages_success(self):
+        mock_client = MagicMock()
+        mock_client.receive_message.return_value = {
+            "Messages": [{"ReceiptHandle": "h-123", "Body": '{"jobId": "1"}'}]
+        }
+        sqs = SQSService(queue_url="http://queue", client=mock_client)
+        result = sqs.receive_messages(max_messages=5, wait_time_seconds=10)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["ReceiptHandle"], "h-123")
+        mock_client.receive_message.assert_called_once_with(
+            QueueUrl="http://queue",
+            MaxNumberOfMessages=5,
+            WaitTimeSeconds=10,
+        )
+
+    def test_delete_message_empty_queue_url_or_client(self):
+        # Empty queue_url
+        sqs_empty_url = SQSService(queue_url="", client=MagicMock())
+        self.assertFalse(sqs_empty_url.delete_message("handle-1"))
+
+        # None client
+        sqs_none_client = SQSService(queue_url="http://queue", client=None)
+        self.assertFalse(sqs_none_client.delete_message("handle-1"))
+
+        # Empty receipt_handle
+        sqs = SQSService(queue_url="http://queue", client=MagicMock())
+        self.assertFalse(sqs.delete_message(""))
+
+    def test_delete_message_client_exception(self):
+        mock_client = MagicMock()
+        mock_client.delete_message.side_effect = Exception("Receipt handle invalid")
+        sqs = SQSService(queue_url="http://queue", client=mock_client)
+        # Caught and returns False without crashing
+        self.assertFalse(sqs.delete_message("handle-1"))
+
+    def test_delete_message_success(self):
+        mock_client = MagicMock()
+        sqs = SQSService(queue_url="http://queue", client=mock_client)
+        self.assertTrue(sqs.delete_message("handle-1"))
+        mock_client.delete_message.assert_called_once_with(
+            QueueUrl="http://queue",
+            ReceiptHandle="handle-1",
+        )
+
+    def test_reset_visibility_empty_queue_url_or_client(self):
+        # Empty queue_url
+        sqs_empty_url = SQSService(queue_url="", client=MagicMock())
+        self.assertFalse(sqs_empty_url.reset_visibility("handle-1"))
+
+        # None client
+        sqs_none_client = SQSService(queue_url="http://queue", client=None)
+        self.assertFalse(sqs_none_client.reset_visibility("handle-1"))
+
+        # Empty receipt_handle
+        sqs = SQSService(queue_url="http://queue", client=MagicMock())
+        self.assertFalse(sqs.reset_visibility(""))
+
+    def test_reset_visibility_client_exception(self):
+        mock_client = MagicMock()
+        mock_client.change_message_visibility.side_effect = Exception("Throttled")
+        sqs = SQSService(queue_url="http://queue", client=mock_client)
+        # Caught and returns False without crashing
+        self.assertFalse(sqs.reset_visibility("handle-1", 0))
+
+    def test_reset_visibility_success(self):
+        mock_client = MagicMock()
+        sqs = SQSService(queue_url="http://queue", client=mock_client)
+        self.assertTrue(sqs.reset_visibility("handle-1", 0))
+        mock_client.change_message_visibility.assert_called_once_with(
+            QueueUrl="http://queue",
+            ReceiptHandle="handle-1",
+            VisibilityTimeout=0,
+        )
 
 
 if __name__ == "__main__":

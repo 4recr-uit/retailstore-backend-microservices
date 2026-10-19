@@ -16,8 +16,10 @@
     "test": {
       "executor": "nx:run-commands",
       "dependsOn": ["build"],
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*"],
       "options": {
-        "command": "exit 0"
+        "command": "go test -v ./..."
       }
     },
     "test:integration": {
@@ -32,7 +34,7 @@
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "exit 0"
+        "command": "go vet ./..."
       }
     },
     "serve": {
