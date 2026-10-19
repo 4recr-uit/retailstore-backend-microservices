@@ -6,7 +6,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN groupadd -g 1000 appuser && \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd -g 1000 appuser && \
     useradd -u 1000 -g appuser -s /bin/sh -m appuser
 
 COPY requirements.txt .
