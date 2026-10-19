@@ -1,0 +1,21 @@
+{{- if .Values.configMap.create -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "orders.configMapName" . }}
+  labels:
+    {{- include "orders.labels" . | nindent 4 }}
+data:
+  PORT: "8080"
+  DB_HOST: {{ .Values.database.host | quote }}
+  DB_PORT: {{ .Values.database.port | quote }}
+  DB_NAME: {{ .Values.database.name | quote }}
+  DB_SCHEMA: {{ .Values.database.schema | quote }}
+  DB_USER: {{ .Values.database.user | quote }}
+  DB_SSLMODE: {{ .Values.database.sslmode | quote }}
+  SQS_QUEUE_URL: {{ .Values.sqs.queueUrl | quote }}
+  AWS_REGION: {{ .Values.sqs.region | quote }}
+  {{- if .Values.sqs.endpoint }}
+  AWS_ENDPOINT_URL: {{ .Values.sqs.endpoint | quote }}
+  {{- end }}
+{{- end }}

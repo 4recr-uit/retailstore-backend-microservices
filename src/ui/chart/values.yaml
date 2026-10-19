@@ -57,7 +57,8 @@ autoscaling:
   maxReplicas: 10
   targetCPUUtilizationPercentage: 50
 
-nodeSelector: {}
+nodeSelector:
+  eks.amazonaws.com/nodegroup: managed-ng
 
 tolerations: []
 

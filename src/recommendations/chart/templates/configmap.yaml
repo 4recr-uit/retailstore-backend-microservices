@@ -1,0 +1,15 @@
+{{- if .Values.configMap.create -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "recommendations.configMapName" . }}
+  labels:
+    {{- include "recommendations.labels" . | nindent 4 }}
+data:
+  PORT: "8080"
+  RETAIL_RECOMMENDATIONS_PERSISTENCE_PROVIDER: {{ .Values.app.persistence.provider | quote }}
+  RETAIL_RECOMMENDATIONS_PERSISTENCE_ENDPOINT: {{ .Values.app.persistence.endpoint | quote }}
+  RETAIL_RECOMMENDATIONS_PERSISTENCE_DB_NAME: {{ .Values.app.persistence.database | quote }}
+  RETAIL_RECOMMENDATIONS_PERSISTENCE_USER: {{ .Values.app.persistence.user | quote }}
+  RETAIL_RECOMMENDATIONS_PERSISTENCE_CONNECT_TIMEOUT: {{ .Values.app.persistence.connectTimeout | quote }}
+{{- end }}

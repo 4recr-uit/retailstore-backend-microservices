@@ -1,0 +1,10 @@
+Dockerfile
+.dockerignore
+docker-compose.yml
+.gitignore
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+chart/

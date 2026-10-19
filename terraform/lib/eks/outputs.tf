@@ -8,6 +8,11 @@ output "cluster_endpoint" {
   value       = module.eks_cluster.cluster_endpoint
 }
 
+output "cluster_primary_security_group_id" {
+  description = "Cluster security group that was created by Amazon EKS for the cluster."
+  value       = module.eks_cluster.cluster_primary_security_group_id
+}
+
 output "cluster_certificate_authority_data" {
   description = "Cluster CA data"
   value       = module.eks_cluster.cluster_certificate_authority_data
@@ -41,4 +46,14 @@ output "configure_kubectl" {
 output "adot_namespace" {
   description = "Namespace where ADOT is deployed"
   value       = kubernetes_namespace_v1.adot.metadata[0].name
+}
+
+output "karpenter_interruption_queue_name" {
+  description = "Name of the SQS queue used by Karpenter for Spot interruption handling"
+  value       = aws_sqs_queue.karpenter_interruption.name
+}
+
+output "karpenter_interruption_queue_arn" {
+  description = "ARN of the SQS queue used by Karpenter for Spot interruption handling"
+  value       = aws_sqs_queue.karpenter_interruption.arn
 }
