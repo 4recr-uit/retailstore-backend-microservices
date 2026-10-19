@@ -54,6 +54,44 @@ app.kubernetes.io/owner: retail-store-sample
 {{- end }}
 
 {{/*
+API component labels
+*/}}
+{{- define "carts.api.labels" -}}
+helm.sh/chart: {{ include "carts.chart" . }}
+{{ include "carts.api.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- define "carts.api.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "carts.fullname" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: api
+app.kubernetes.io/owner: retail-store-sample
+{{- end }}
+
+{{/*
+Worker component labels
+*/}}
+{{- define "carts.worker.labels" -}}
+helm.sh/chart: {{ include "carts.chart" . }}
+{{ include "carts.worker.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- define "carts.worker.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "carts.fullname" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: worker
+app.kubernetes.io/owner: retail-store-sample
+{{- end }}
+
+{{/*
 Create the name of the service account to use
 */}}
 {{- define "carts.serviceAccountName" -}}
@@ -75,38 +113,9 @@ Create the name of the config map to use
 {{- end }}
 {{- end }}
 
-{{/* podAnnotations */}}
-{{- define "carts.podAnnotations" -}}
-{{- if or .Values.metrics.enabled .Values.podAnnotations }}
-{{- $podAnnotations := .Values.podAnnotations}}
-{{- $metricsAnnotations := .Values.metrics.podAnnotations}}
-{{- $allAnnotations := merge $podAnnotations $metricsAnnotations}}
-{{- toYaml $allAnnotations }}
-{{- end }}
-{{- end -}}
-
-{{- define "carts.dynamodb.fullname" -}}
-{{- include "carts.fullname" . }}-dynamodb
-{{- end -}}
-
 {{/*
-Common labels for dynamodb
+Create secret name
 */}}
-{{- define "carts.dynamodb.labels" -}}
-helm.sh/chart: {{ include "carts.chart" . }}
-{{ include "carts.dynamodb.selectorLabels" . }}
-{{- if .Chart.AppVersion }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-{{- end }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end }}
-
-{{/*
-Selector labels for dynamodb
-*/}}
-{{- define "carts.dynamodb.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "carts.fullname" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/component: dynamodb
-app.kubernetes.io/owner: retail-store-sample
+{{- define "carts.secretName" -}}
+{{- default (printf "%s-db" (include "carts.fullname" .)) .Values.database.secret.name }}
 {{- end }}

@@ -1,0 +1,24 @@
+{{- if and .Values.worker.enabled .Values.worker.scaledObject.enabled -}}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "orders.fullname" . }}-worker
+  labels:
+    {{- include "orders.worker.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "orders.fullname" . }}-worker
+  minReplicaCount: {{ .Values.worker.scaledObject.minReplicaCount }}
+  maxReplicaCount: {{ .Values.worker.scaledObject.maxReplicaCount }}
+  pollingInterval: {{ .Values.worker.scaledObject.pollingInterval | default 5 }}
+  cooldownPeriod: {{ .Values.worker.scaledObject.cooldownPeriod | default 30 }}
+  triggers:
+    - type: aws-sqs-queue
+      metadata:
+        queueURL: {{ .Values.worker.sqsQueueUrl | default .Values.sqs.queueUrl | quote }}
+        queueLength: {{ .Values.worker.scaledObject.queueLength | default "10" | quote }}
+        awsRegion: {{ .Values.worker.scaledObject.awsRegion | default .Values.sqs.region | quote }}
+        scaleOnInFlight: {{ .Values.worker.scaledObject.scaleOnInFlight | default "true" | quote }}
+{{- end }}

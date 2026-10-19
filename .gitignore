@@ -40,3 +40,13 @@ screenshots
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# ai agents
+
+.agents
+AGENTS.md
+
+# python cache
+__pycache__/
+*.pyc
+.pytest_cache/

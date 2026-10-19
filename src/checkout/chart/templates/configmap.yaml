@@ -3,17 +3,19 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ include "checkout.configMapName" . }}
+  labels:
+    {{- include "checkout.labels" . | nindent 4 }}
 data:
-  RETAIL_CHECKOUT_PERSISTENCE_PROVIDER: {{ .Values.app.persistence.provider }}
-  {{- if (eq "redis" .Values.app.persistence.provider) }}
-  {{- if .Values.redis.create }}
-  RETAIL_CHECKOUT_PERSISTENCE_REDIS_URL: redis://{{ include "checkout.redis.fullname" . }}:{{ .Values.redis.service.port }}
-  {{- else }}
-  {{- $scheme := ternary "rediss" "redis" .Values.app.persistence.redis.tls }}
-  RETAIL_CHECKOUT_PERSISTENCE_REDIS_URL: {{ $scheme }}://{{ .Values.app.persistence.redis.endpoint }}
-  {{- end }}
-  {{- if .Values.app.endpoints.orders }}
-  RETAIL_CHECKOUT_ENDPOINTS_ORDERS: {{ .Values.app.endpoints.orders }}
-  {{- end }}
+  PORT: "8080"
+  DB_HOST: {{ .Values.database.host | quote }}
+  DB_PORT: {{ .Values.database.port | quote }}
+  DB_NAME: {{ .Values.database.name | quote }}
+  DB_SCHEMA: {{ .Values.database.schema | quote }}
+  DB_USER: {{ .Values.database.user | quote }}
+  DB_SSLMODE: {{ .Values.database.sslmode | quote }}
+  SQS_QUEUE_URL: {{ .Values.sqs.queueUrl | quote }}
+  AWS_REGION: {{ .Values.sqs.region | quote }}
+  {{- if .Values.sqs.endpoint }}
+  AWS_ENDPOINT_URL: {{ .Values.sqs.endpoint | quote }}
   {{- end }}
 {{- end }}

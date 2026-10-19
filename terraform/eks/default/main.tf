@@ -60,3 +60,15 @@ module "retail_app_eks" {
 
   istio_enabled = var.istio_enabled
 }
+
+module "rds" {
+  source = "../../modules/rds"
+
+  environment_name              = var.environment_name
+  vpc_id                        = module.vpc.inner.vpc_id
+  subnet_ids                    = module.vpc.inner.private_subnets
+  eks_cluster_security_group_id = module.retail_app_eks.cluster_primary_security_group_id
+  eks_node_security_group_id    = module.retail_app_eks.node_security_group_id
+  vpc_cidr                      = module.vpc.inner.vpc_cidr_block
+  tags                          = module.tags.result
+}

@@ -54,6 +54,44 @@ app.kubernetes.io/owner: retail-store-sample
 {{- end }}
 
 {{/*
+API component labels
+*/}}
+{{- define "orders.api.labels" -}}
+helm.sh/chart: {{ include "orders.chart" . }}
+{{ include "orders.api.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- define "orders.api.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "orders.fullname" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: api
+app.kubernetes.io/owner: retail-store-sample
+{{- end }}
+
+{{/*
+Worker component labels
+*/}}
+{{- define "orders.worker.labels" -}}
+helm.sh/chart: {{ include "orders.chart" . }}
+{{ include "orders.worker.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- define "orders.worker.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "orders.fullname" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: worker
+app.kubernetes.io/owner: retail-store-sample
+{{- end }}
+
+{{/*
 Create the name of the service account to use
 */}}
 {{- define "orders.serviceAccountName" -}}
@@ -75,101 +113,9 @@ Create the name of the config map to use
 {{- end }}
 {{- end }}
 
-
-{{/* podAnnotations */}}
-{{- define "orders.podAnnotations" -}}
-{{- if or .Values.metrics.enabled .Values.podAnnotations }}
-{{- $podAnnotations := .Values.podAnnotations}}
-{{- $metricsAnnotations := .Values.metrics.podAnnotations}}
-{{- $allAnnotations := merge $podAnnotations $metricsAnnotations }}
-{{- toYaml $allAnnotations }}
-{{- end }}
-{{- end -}}
-
-{{- define "orders.postgresql.fullname" -}}
-{{- include "orders.fullname" . }}-postgresql
-{{- end -}}
-
 {{/*
-Common labels for postgresql
+Create the secret name
 */}}
-{{- define "orders.postgresql.labels" -}}
-helm.sh/chart: {{ include "orders.chart" . }}
-{{ include "orders.postgresql.selectorLabels" . }}
-{{- if .Chart.AppVersion }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- define "orders.secretName" -}}
+{{- default (printf "%s-db" (include "orders.fullname" .)) .Values.database.secret.name }}
 {{- end }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end }}
-
-{{/*
-Selector labels for postgresql
-*/}}
-{{- define "orders.postgresql.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "orders.fullname" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/component: postgresql
-app.kubernetes.io/owner: retail-store-sample
-{{- end }}
-
-{{- define "getOrGeneratePass" }}
-{{- $len := (default 16 .Length) | int -}}
-{{- $obj := (lookup "v1" .Kind .Namespace .Name).data -}}
-{{- if $obj }}
-{{- index $obj .Key -}}
-{{- else if (eq (lower .Kind) "secret") -}}
-{{- randAlphaNum $len | b64enc -}}
-{{- else -}}
-{{- randAlphaNum $len -}}
-{{- end -}}
-{{- end }}
-
-{{- define "orders.postgresql.password" -}}
-{{- if not (empty .Values.app.persistence.secret.password) -}}
-    {{- .Values.app.persistence.secret.password | b64enc -}}
-{{- else -}}
-    {{- include "getOrGeneratePass" (dict "Namespace" .Release.Namespace "Kind" "Secret" "Name" .Values.app.persistence.secret.name "Key" "RETAIL_ORDERS_PERSISTENCE_PASSWORD") -}}
-{{- end -}}
-{{- end -}}
-
-{{- define "orders.postgresql.endpoint" -}}
-{{- if .Values.postgresql.create -}}
-{{ include "orders.postgresql.fullname" . }}:{{ .Values.postgresql.service.port }}
-{{- else }}
-{{- .Values.app.persistence.endpoint -}}
-{{- end -}}
-{{- end -}}
-
-{{- define "orders.rabbitmq.fullname" -}}
-{{- include "orders.fullname" . }}-rabbitmq
-{{- end -}}
-
-{{/*
-Common labels for rabbitmq
-*/}}
-{{- define "orders.rabbitmq.labels" -}}
-helm.sh/chart: {{ include "orders.chart" . }}
-{{ include "orders.rabbitmq.selectorLabels" . }}
-{{- if .Chart.AppVersion }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-{{- end }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end }}
-
-{{/*
-Selector labels for rabbitmq
-*/}}
-{{- define "orders.rabbitmq.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "orders.fullname" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/component: rabbitmq
-app.kubernetes.io/owner: retail-store-sample
-{{- end }}
-
-{{- define "orders.rabbitmq.addresses" -}}
-{{- if .Values.rabbitmq.create -}}
-{{ include "orders.rabbitmq.fullname" . }}:{{ .Values.rabbitmq.service.amqp.port }}
-{{- else }}
-{{- join "," .Values.app.messaging.rabbitmq.addresses }}
-{{- end -}}
-{{- end -}}

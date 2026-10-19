@@ -1,0 +1,33 @@
+{{- if and .Values.api.enabled .Values.api.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "carts.fullname" . }}-api
+  labels:
+    {{- include "carts.api.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "carts.api.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: {{ .Values.api.serviceMonitor.port | default "http" }}
+      path: {{ .Values.api.serviceMonitor.path | default "/metrics" }}
+      interval: {{ .Values.api.serviceMonitor.scrapeInterval | default "5s" }}
+{{- end }}
+---
+{{- if and .Values.worker.enabled .Values.worker.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "carts.fullname" . }}-worker
+  labels:
+    {{- include "carts.worker.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "carts.worker.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: {{ .Values.worker.serviceMonitor.port | default "http" }}
+      path: {{ .Values.worker.serviceMonitor.path | default "/metrics" }}
+      interval: {{ .Values.worker.serviceMonitor.scrapeInterval | default "5s" }}
+{{- end }}

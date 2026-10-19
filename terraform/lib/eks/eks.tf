@@ -21,6 +21,9 @@ module "eks_cluster" {
         }
       })
     }
+    eks-pod-identity-agent = {
+      most_recent = true
+    }
   }
 
   vpc_id = var.vpc_id
