@@ -38,31 +38,86 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var dbConfig config.DatabaseConfiguration
+var (
+	dbConfig   config.DatabaseConfiguration
+	testRouter *gin.Engine
+)
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
-	container, port, _ := prepareContainer(ctx)
+	gin.SetMode(gin.TestMode)
 
-	endpoint := fmt.Sprintf("localhost:%s", port)
-
-	dbConfig = config.DatabaseConfiguration{
-		Type:           "mysql",
-		Endpoint:       endpoint,
-		Name:           "catalogdb",
-		User:           "catalog_user",
-		Password:       "unittest123",
-		ConnectTimeout: 5,
+	endpoint := os.Getenv("RETAIL_CATALOG_PERSISTENCE_ENDPOINT")
+	if endpoint == "" {
+		endpoint = os.Getenv("MYSQL_ENDPOINT")
 	}
 
-	gin.SetMode(gin.TestMode)
+	var container testcontainers.Container
+	if endpoint != "" {
+		dbName := os.Getenv("RETAIL_CATALOG_PERSISTENCE_DB_NAME")
+		if dbName == "" {
+			dbName = "catalogdb"
+		}
+		dbUser := os.Getenv("RETAIL_CATALOG_PERSISTENCE_USER")
+		if dbUser == "" {
+			dbUser = "catalog_user"
+		}
+		dbPassword := os.Getenv("RETAIL_CATALOG_PERSISTENCE_PASSWORD")
+		if dbPassword == "" {
+			dbPassword = "unittest123"
+		}
+		dbConfig = config.DatabaseConfiguration{
+			Type:           "mysql",
+			Endpoint:       endpoint,
+			Name:           dbName,
+			User:           dbUser,
+			Password:       dbPassword,
+			ConnectTimeout: 5,
+		}
+	} else if os.Getenv("USE_TESTCONTAINERS") == "true" {
+		var port string
+		var err error
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("TestContainers failed with panic: %v\n", r)
+				}
+			}()
+			container, port, err = prepareContainer(ctx)
+		}()
+		if err == nil && container != nil {
+			dbConfig = config.DatabaseConfiguration{
+				Type:           "mysql",
+				Endpoint:       fmt.Sprintf("localhost:%s", port),
+				Name:           "catalogdb",
+				User:           "catalog_user",
+				Password:       "unittest123",
+				ConnectTimeout: 5,
+			}
+		} else {
+			log.Println("Falling back to in-memory database for tests")
+			dbConfig = config.DatabaseConfiguration{
+				Type: "in-memory",
+			}
+		}
+	} else {
+		dbConfig = config.DatabaseConfiguration{
+			Type: "in-memory",
+		}
+	}
+
 	exitCode := m.Run()
 
-	container.Terminate(ctx)
+	if container != nil {
+		_ = container.Terminate(ctx)
+	}
 	os.Exit(exitCode)
 }
 
 func router() *gin.Engine {
+	if testRouter != nil {
+		return testRouter
+	}
 	router := gin.Default()
 
 	db, err := repository.NewRepository(dbConfig)
@@ -83,12 +138,17 @@ func router() *gin.Engine {
 	catalog := router.Group("/catalog")
 
 	catalog.GET("", c.GetProducts)
+	catalog.GET("/products", c.GetProducts)
 
 	catalog.GET("/size", c.CatalogSize)
 	catalog.GET("/tags", c.ListTags)
 	catalog.GET("/product/:id", c.GetProduct)
+	catalog.GET("/products/:id", c.GetProduct)
+	catalog.GET("/search", c.SearchProducts)
+	catalog.POST("/reindex", c.ReindexProducts)
 
-	return router
+	testRouter = router
+	return testRouter
 }
 
 func prepareContainer(ctx context.Context) (testcontainers.Container, string, error) {

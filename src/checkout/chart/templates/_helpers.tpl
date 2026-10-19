@@ -54,6 +54,44 @@ app.kubernetes.io/owner: retail-store-sample
 {{- end }}
 
 {{/*
+API component labels
+*/}}
+{{- define "checkout.api.labels" -}}
+helm.sh/chart: {{ include "checkout.chart" . }}
+{{ include "checkout.api.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- define "checkout.api.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "checkout.fullname" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: api
+app.kubernetes.io/owner: retail-store-sample
+{{- end }}
+
+{{/*
+Worker component labels
+*/}}
+{{- define "checkout.worker.labels" -}}
+helm.sh/chart: {{ include "checkout.chart" . }}
+{{ include "checkout.worker.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- define "checkout.worker.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "checkout.fullname" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: worker
+app.kubernetes.io/owner: retail-store-sample
+{{- end }}
+
+{{/*
 Create the name of the service account to use
 */}}
 {{- define "checkout.serviceAccountName" -}}
@@ -75,39 +113,9 @@ Create the name of the config map to use
 {{- end }}
 {{- end }}
 
-
-{{/* podAnnotations */}}
-{{- define "checkout.podAnnotations" -}}
-{{- if or .Values.metrics.enabled .Values.podAnnotations }}
-{{- $podAnnotations := .Values.podAnnotations}}
-{{- $metricsAnnotations := .Values.metrics.podAnnotations}}
-{{- $allAnnotations := merge $podAnnotations $metricsAnnotations }}
-{{- toYaml $allAnnotations }}
-{{- end }}
-{{- end -}}
-
-{{- define "checkout.redis.fullname" -}}
-{{- include "checkout.fullname" . }}-redis
-{{- end -}}
-
 {{/*
-Common labels for redis
+Create the secret name
 */}}
-{{- define "checkout.redis.labels" -}}
-helm.sh/chart: {{ include "checkout.chart" . }}
-{{ include "checkout.redis.selectorLabels" . }}
-{{- if .Chart.AppVersion }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-{{- end }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end }}
-
-{{/*
-Selector labels for redis
-*/}}
-{{- define "checkout.redis.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "checkout.fullname" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/component: redis
-app.kubernetes.io/owner: retail-store-sample
+{{- define "checkout.secretName" -}}
+{{- default (printf "%s-db" (include "checkout.fullname" .)) .Values.database.secret.name }}
 {{- end }}

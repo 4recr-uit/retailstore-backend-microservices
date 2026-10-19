@@ -4,5 +4,7 @@ docker-compose.yml
 .gitignore
 chart
 scripts
-dist
-node_modules
+__pycache__
+*.pyc
+.pytest_cache
+test_main.py

@@ -1,28 +1,19 @@
 # Default values for checkout.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
-
-replicaCount: 1
+# Single Image – Dual Mode Deployment (API producer + Worker consumer)
 
 image:
   repository: public.ecr.aws/aws-containers/retail-store-sample-checkout
   pullPolicy: IfNotPresent
-  tag: 
+  tag: ""
 
 imagePullSecrets: []
-nameOverride: ''
-fullnameOverride: ''
+nameOverride: ""
+fullnameOverride: ""
 
 serviceAccount:
-  # Specifies whether a service account should be created
   create: true
-  # Annotations to add to the service account
   annotations: {}
-  # The name of the service account to use.
-  # If not set and create is true, a name is generated using the fullname template
-  name: ''
-
-podAnnotations: {}
+  name: ""
 
 podSecurityContext:
   fsGroup: 1000
@@ -31,87 +22,104 @@ securityContext:
   capabilities:
     drop:
       - ALL
-  readOnlyRootFilesystem: true
+  readOnlyRootFilesystem: false
   runAsNonRoot: true
   runAsUser: 1000
 
-service:
-  type: ClusterIP
-  port: 80
+# Shared Database Configuration (pointing to PgBouncer -> RDS PostgreSQL retaildb)
+database:
+  host: "pgbouncer"
+  port: 6432
+  name: "retaildb"
+  schema: "checkout"
+  user: "postgres"
+  password: "postgrespassword"
+  sslmode: "disable"
+  secret:
+    create: true
+    name: "checkout-db"
 
-resources:
-  limits:
-    memory: 256Mi
-  requests:
-    cpu: 128m
-    memory: 256Mi
-
-autoscaling:
-  enabled: false
-  minReplicas: 1
-  maxReplicas: 10
-  targetCPUUtilizationPercentage: 80
-  # targetMemoryUtilizationPercentage: 80
-
-nodeSelector: {}
-
-tolerations: []
-
-affinity: {}
-
-topologySpreadConstraints: []
-
-metrics:
-  enabled: true
-  podAnnotations:
-    prometheus.io/scrape: 'true'
-    prometheus.io/port: '8080'
-    prometheus.io/path: '/metrics'
+# SQS Configuration
+sqs:
+  queueUrl: ""
+  endpoint: ""
+  region: "us-east-1"
 
 configMap:
   create: true
-  name:
+  name: ""
 
-app:
-  persistence:
-    provider: 'in-memory'
-    redis:
-      endpoint: ''
-      tls: false
-
-  endpoints:
-    orders: ''
-
-redis:
-  create: false
-
-  image:
-    repository: redis
-    pullPolicy: IfNotPresent
-    tag: '6.0-alpine'
-
+# --- API Deployment (Producer / REST API) ---
+api:
+  enabled: true
+  replicaCount: 2
+  appMode: "api"
+  resources:
+    limits:
+      memory: 256Mi
+    requests:
+      cpu: 128m
+      memory: 256Mi
   service:
     type: ClusterIP
-    port: 6379
-
-  podAnnotations: {}
-
-  nodeSelector: {}
-
+    port: 80
+    targetPort: 8080
+  nodeSelector:
+    eks.amazonaws.com/nodegroup: managed-ng
   tolerations: []
-
   affinity: {}
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+  serviceMonitor:
+    enabled: true
+    scrapeInterval: 5s
+    path: /metrics
+    port: http
 
-securityGroups:
-  create: false
-
-  securityGroupIds: []
-
-opentelemetry:
-  enabled: false
-  instrumentation: ''
-
-podDisruptionBudget:
-  enabled: false
-  minAvailable: 2
-  maxUnavailable: 1
+# --- Worker Deployment (SQS Consumer / KEDA Scaled) ---
+worker:
+  enabled: true
+  replicaCount: 0 # Scaled by KEDA (Scale-to-zero)
+  appMode: "worker"
+  terminationGracePeriodSeconds: 90
+  workerDbMode: "light" # none | light | full
+  workerConcurrency: "1"
+  sqsMaxMessages: "1"
+  sqsQueueUrl: "" # defaults to .Values.sqs.queueUrl
+  resources:
+    limits:
+      memory: 256Mi
+    requests:
+      cpu: 128m
+      memory: 256Mi
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+  nodeSelector:
+    karpenter.sh/nodepool: default
+  tolerations:
+    - key: "karpenter.sh/capacity-type"
+      operator: "Exists"
+      effect: "NoSchedule"
+  affinity: {}
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+  serviceMonitor:
+    enabled: true
+    scrapeInterval: 5s
+    path: /metrics
+    port: http
+  scaledObject:
+    enabled: true
+    minReplicaCount: 0
+    maxReplicaCount: 30
+    pollingInterval: 5
+    cooldownPeriod: 30
+    scaleOnInFlight: "true"
+    queueLength: "10"
+    awsRegion: "us-east-1"

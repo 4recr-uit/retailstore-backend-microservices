@@ -1,6 +1,7 @@
 package test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -37,7 +38,7 @@ func TestChaosMiddleware_Latency(t *testing.T) {
 	// Test adding latency
 	t.Run("Set latency", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/chaos/latency/1000", nil)
+		req, _ := http.NewRequest("POST", "/chaos/latency/50", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -50,7 +51,7 @@ func TestChaosMiddleware_Latency(t *testing.T) {
 		duration := time.Since(start)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.GreaterOrEqual(t, duration.Milliseconds(), int64(1000))
+		assert.GreaterOrEqual(t, duration.Milliseconds(), int64(45))
 	})
 
 	// Test disabling latency
@@ -69,8 +70,49 @@ func TestChaosMiddleware_Latency(t *testing.T) {
 		duration := time.Since(start)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Less(t, duration.Milliseconds(), int64(1000))
+		assert.Less(t, duration.Milliseconds(), int64(50))
 	})
+}
+
+func TestChaosMiddleware_Status(t *testing.T) {
+	router, _ := setupTestRouter()
+
+	// Initially disabled
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/chaos/status", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	assert.Equal(t, false, resp["latency"]["enabled"])
+	assert.Equal(t, float64(0), resp["latency"]["value"])
+	assert.Equal(t, false, resp["error_status"]["enabled"])
+	assert.Equal(t, float64(0), resp["error_status"]["code"])
+
+	// Enable latency and error status
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("POST", "/chaos/latency/50", nil)
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("POST", "/chaos/status/500", nil)
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Check status updated
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/chaos/status", nil)
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	assert.Equal(t, true, resp["latency"]["enabled"])
+	assert.Equal(t, float64(50), resp["latency"]["value"])
+	assert.Equal(t, true, resp["error_status"]["enabled"])
+	assert.Equal(t, float64(500), resp["error_status"]["code"])
 }
 
 func TestChaosMiddleware_ErrorStatus(t *testing.T) {

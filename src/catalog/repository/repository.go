@@ -7,8 +7,8 @@ import (
 
 	"github.com/aws-containers/retail-store-sample-app/catalog/config"
 	"github.com/aws-containers/retail-store-sample-app/catalog/model"
+	"github.com/glebarez/sqlite"
 	"gorm.io/driver/mysql"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/plugin/opentelemetry/tracing"
 )
@@ -33,6 +33,13 @@ func createMySQLDatabase(config config.DatabaseConfiguration) (*gorm.DB, error) 
 	for i := 0; i < 6; i++ {
 		db, err = gorm.Open(mysql.Open(connectionString), &gorm.Config{})
 		if err == nil {
+			sqlDB, sqlErr := db.DB()
+			if sqlErr != nil {
+				return nil, fmt.Errorf("failed to get underlying sql.DB: %w", sqlErr)
+			}
+			sqlDB.SetMaxOpenConns(10)
+			sqlDB.SetMaxIdleConns(5)
+			sqlDB.SetConnMaxLifetime(30 * time.Minute)
 			return db, nil
 		}
 		fmt.Printf("Waiting for MySQL to be ready... (%v)\n", err)

@@ -1,0 +1,17 @@
+{{- if .Values.worker.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "checkout.fullname" . }}-worker
+  labels:
+    {{- include "checkout.worker.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.worker.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.worker.service.port | default 8080 }}
+      targetPort: {{ .Values.worker.service.targetPort | default 8080 }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "checkout.worker.selectorLabels" . | nindent 4 }}
+{{- end }}
