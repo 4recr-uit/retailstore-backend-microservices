@@ -40,14 +40,14 @@ type Config struct {
 
 // Worker polls SQS and executes event-driven jobs with calibrated CPU burns and idempotency.
 type Worker struct {
-	cfg             Config
-	sqsClient       SQSAPI
-	store           store.Store
-	metrics         *metrics.Metrics
-	isFirstJobPod   int32
-	inFlightWg      sync.WaitGroup
-	cancelPolling   context.CancelFunc
-	shutdownDone    chan struct{}
+	cfg           Config
+	sqsClient     SQSAPI
+	store         store.Store
+	metrics       *metrics.Metrics
+	isFirstJobPod int32
+	inFlightWg    sync.WaitGroup
+	cancelPolling context.CancelFunc
+	shutdownDone  chan struct{}
 }
 
 // NewWorker initializes a new Worker.

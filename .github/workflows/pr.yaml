@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - development
     types:
       - opened
       - edited
@@ -48,10 +49,30 @@ jobs:
         uses: ./.github/actions/setup-env
       - name: Build
         run: |
-          yarn nx affected --targets=build --base origin/main --parallel 1
+          yarn nx affected --targets=build --base origin/${{ github.base_ref }} --parallel 1
       - name: Other tasks
         run: |
-          yarn nx affected --targets=lint,test:integration,test --base origin/main
+          yarn nx affected --targets=lint,test:integration,test --base origin/${{ github.base_ref }}
       - name: Containers
         run: |
-          yarn nx affected --targets=container --exclude='*,!tag:container' --base origin/main
+          yarn nx affected --targets=container --exclude='*,!tag:container' --base origin/${{ github.base_ref }}
+
+  unit-tests:
+    name: "Unit tests"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: "Setup Env"
+        uses: ./.github/actions/setup-env
+      - name: Go Unit Tests (cart, orders, catalog)
+        run: |
+          (cd src/cart && go test -v -race ./...)
+          (cd src/orders && go test -v -race ./...)
+          (cd src/catalog && go test -v ./...)
+      - name: Python Unit Tests (checkout, recommendations)
+        run: |
+          (cd src/checkout && python3 -m venv .venv && .venv/bin/pip install --quiet -r requirements.txt && .venv/bin/python -m unittest discover -v)
+          (cd src/recommendations && python3 -m venv .venv && .venv/bin/pip install --quiet -r requirements.txt && .venv/bin/python -m unittest discover -v)

@@ -32,16 +32,16 @@ import (
 
 // AppConfig contains runtime settings for API and Worker.
 type AppConfig struct {
-	AppMode          string // "api" | "worker" | "all"
-	Port             string
-	Service          string
-	QueueName        string
-	QueueURL         string
-	MaxMessages      int32
+	AppMode           string // "api" | "worker" | "all"
+	Port              string
+	Service           string
+	QueueName         string
+	QueueURL          string
+	MaxMessages       int32
 	WorkerConcurrency int
-	DBMode           string
-	AWSRegion        string
-	AWSEndpointURL   string
+	DBMode            string
+	AWSRegion         string
+	AWSEndpointURL    string
 }
 
 func loadConfig() AppConfig {

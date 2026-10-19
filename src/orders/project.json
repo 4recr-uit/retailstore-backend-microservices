@@ -7,43 +7,40 @@
     "build": {
       "executor": "nx:run-commands",
       "cache": true,
-      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/pom.xml"],
-      "outputs": ["{projectRoot}/target/*.jar"],
+      "inputs": ["{projectRoot}/**/*", "!{projectRoot}/dist/*"],
+      "outputs": ["{projectRoot}/dist/*"],
       "options": {
-        "command": "./mvnw --no-transfer-progress -DskipTests package"
+        "command": "go build -o dist/main ."
       }
     },
     "test": {
       "executor": "nx:run-commands",
       "dependsOn": ["build"],
       "cache": true,
-      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/pom.xml"],
-      "outputs": ["{projectRoot}/target/surefire-reports/*.xml"],
+      "inputs": ["{projectRoot}/**/*"],
       "options": {
-        "command": "./mvnw clean test -DexcludedGroups=integration"
+        "command": "go test -v -race ./..."
       }
     },
     "test:integration": {
       "executor": "nx:run-commands",
       "dependsOn": ["test"],
       "cache": true,
-      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/pom.xml"],
-      "outputs": ["{projectRoot}/target/surefire-reports/*.xml"],
+      "inputs": ["{projectRoot}/**/*"],
       "options": {
-        "command": "./mvnw clean test -Dgroups=integration"
+        "command": "go test -v ./..."
       }
     },
     "lint": {
       "executor": "nx:run-commands",
-      "dependsOn": ["build"],
       "options": {
-        "command": "./mvnw checkstyle:checkstyle"
+        "command": "go vet ./..."
       }
     },
     "serve": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "./mvnw spring-boot:run"
+        "command": "go run ."
       }
     },
     "manifest": {},

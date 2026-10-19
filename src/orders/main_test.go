@@ -160,11 +160,11 @@ func TestInMemoryRepository(t *testing.T) {
 // Test API Endpoints
 func TestAPIEndpoints(t *testing.T) {
 	cfg := &config.Config{
-		AppMode:        "api",
-		ServiceName:    "orders",
-		QueueName:      "orders-queue",
-		SQSQueueURL:    "http://localhost:4566/000000000000/orders-queue",
-		WorkerDBMode:   "light",
+		AppMode:      "api",
+		ServiceName:  "orders",
+		QueueName:    "orders-queue",
+		SQSQueueURL:  "http://localhost:4566/000000000000/orders-queue",
+		WorkerDBMode: "light",
 	}
 	repo := db.NewInMemoryRepository()
 	mockSQS := NewMockSQS()
@@ -376,5 +376,168 @@ func TestWorkerProcessingAndGracefulShutdown(t *testing.T) {
 		if mockSQS.VisibilityTimeoutVal != 0 {
 			t.Errorf("Expected visibility timeout 0, got %d", mockSQS.VisibilityTimeoutVal)
 		}
+	}
+}
+
+// Test edge cases in API endpoints
+func TestAPIEndpoints_EdgeCases(t *testing.T) {
+	cfg := &config.Config{
+		AppMode:     "api",
+		ServiceName: "orders",
+		QueueName:   "orders-queue",
+		SQSQueueURL: "http://localhost:4566/000000000000/orders-queue",
+	}
+	repo := db.NewInMemoryRepository()
+	mockSQS := NewMockSQS()
+
+	server := api.NewServer(cfg, repo, mockSQS)
+	router := server.Engine()
+
+	// 1. POST /orders with invalid JSON -> 400 Bad Request
+	req, _ := http.NewRequest(http.MethodPost, "/orders", bytes.NewBufferString("not-valid-json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for invalid JSON in POST /orders, got %d", w.Code)
+	}
+
+	// 2. POST /jobs with invalid JSON -> 400 Bad Request
+	req, _ = http.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString("{invalid: json"))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for invalid JSON in POST /jobs, got %d", w.Code)
+	}
+
+	// 3. POST /jobs when sqsClient == nil -> 503 Service Unavailable
+	nilSQSServer := api.NewServer(cfg, repo, nil)
+	nilSQSRouter := nilSQSServer.Engine()
+	validJobBody := `{"workUnits": 5, "batchSize": 1}`
+	req, _ = http.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString(validJobBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	nilSQSRouter.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 Service Unavailable when sqsClient is nil, got %d", w.Code)
+	}
+
+	// 4. POST /jobs when SQSQueueURL is empty -> 503 Service Unavailable
+	cfgNoQueue := &config.Config{
+		AppMode:     "api",
+		ServiceName: "orders",
+		QueueName:   "orders-queue",
+		SQSQueueURL: "",
+	}
+	noQueueServer := api.NewServer(cfgNoQueue, repo, mockSQS)
+	noQueueRouter := noQueueServer.Engine()
+	req, _ = http.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString(validJobBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	noQueueRouter.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 Service Unavailable when SQSQueueURL is empty, got %d", w.Code)
+	}
+}
+
+// Test Actuator Health and Readiness endpoints
+func TestActuatorHealthEndpoints(t *testing.T) {
+	cfg := &config.Config{
+		AppMode:     "api",
+		ServiceName: "orders",
+	}
+	repo := db.NewInMemoryRepository()
+	server := api.NewServer(cfg, repo, nil)
+	router := server.Engine()
+
+	endpoints := []string{"/actuator/health", "/actuator/health/readiness"}
+
+	// 1. When healthy -> 200 and {"status": "UP"}
+	for _, ep := range endpoints {
+		req, _ := http.NewRequest(http.MethodGet, ep, nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 for %s when healthy, got %d", ep, w.Code)
+		}
+		var resp map[string]string
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || resp["status"] != "UP" {
+			t.Errorf("expected status 'UP' for %s, got body %s", ep, w.Body.String())
+		}
+	}
+
+	// 2. Trigger chaos health disable
+	req, _ := http.NewRequest(http.MethodPost, "/chaos/health", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST /chaos/health failed: %d", w.Code)
+	}
+
+	// 3. When chaos is disabled -> 503 and {"status": "DOWN"}
+	for _, ep := range endpoints {
+		req, _ = http.NewRequest(http.MethodGet, ep, nil)
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected 503 for %s when chaos disabled, got %d", ep, w.Code)
+		}
+		var resp map[string]string
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || resp["status"] != "DOWN" {
+			t.Errorf("expected status 'DOWN' for %s, got body %s", ep, w.Body.String())
+		}
+	}
+
+	// 4. Restore health
+	req, _ = http.NewRequest(http.MethodDelete, "/chaos/health", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("DELETE /chaos/health failed: %d", w.Code)
+	}
+}
+
+// Test Server in AppMode: "worker"
+func TestServerWorkerMode(t *testing.T) {
+	cfg := &config.Config{
+		AppMode:     "worker",
+		ServiceName: "orders",
+		QueueName:   "orders-queue",
+	}
+	repo := db.NewInMemoryRepository()
+	server := api.NewServer(cfg, repo, nil)
+	router := server.Engine()
+
+	// GET /health should return 200 OK
+	req, _ := http.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || w.Body.String() != "OK" {
+		t.Errorf("expected 200 'OK' for /health in worker mode, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	// GET /orders should return 404 Not Found
+	req, _ = http.NewRequest(http.MethodGet, "/orders", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for GET /orders in worker mode, got %d", w.Code)
+	}
+
+	// POST /orders should return 404 Not Found
+	req, _ = http.NewRequest(http.MethodPost, "/orders", bytes.NewBufferString(`{}`))
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for POST /orders in worker mode, got %d", w.Code)
+	}
+
+	// POST /jobs should return 404 Not Found
+	req, _ = http.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString(`{}`))
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for POST /jobs in worker mode, got %d", w.Code)
 	}
 }

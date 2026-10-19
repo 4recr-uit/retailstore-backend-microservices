@@ -36,21 +36,21 @@ type Config struct {
 
 func LoadConfig() *Config {
 	cfg := &Config{
-		AppMode:           getEnv("APP_MODE", "api"),
-		Port:              getEnv("PORT", "8080"),
-		ServiceName:       "orders",
-		DBProvider:        getEnv("RETAIL_ORDERS_PERSISTENCE_PROVIDER", ""),
-		DatabaseURL:       os.Getenv("DATABASE_URL"),
-		DBHost:            getEnv("DB_HOST", os.Getenv("RETAIL_ORDERS_PERSISTENCE_ENDPOINT")),
-		DBPort:            getEnv("DB_PORT", "5432"),
-		DBName:            getEnv("DB_NAME", getEnv("RETAIL_ORDERS_PERSISTENCE_NAME", "retaildb")),
-		DBUser:            getEnv("DB_USER", getEnv("RETAIL_ORDERS_PERSISTENCE_USERNAME", "postgres")),
-		DBPassword:        getEnv("DB_PASSWORD", getEnv("RETAIL_ORDERS_PERSISTENCE_PASSWORD", "postgres")),
-		DBSSLMode:         getEnv("DB_SSLMODE", "disable"),
-		SQSQueueURL:       os.Getenv("SQS_QUEUE_URL"),
-		WorkerDBMode:      getEnv("WORKER_DB_MODE", "light"),
-		AWSRegion:         getEnv("AWS_REGION", getEnv("AWS_DEFAULT_REGION", "us-east-1")),
-		AWSEndpointURL:    getEnv("AWS_ENDPOINT_URL", os.Getenv("AWS_ENDPOINT_URL_SQS")),
+		AppMode:        getEnv("APP_MODE", "api"),
+		Port:           getEnv("PORT", "8080"),
+		ServiceName:    "orders",
+		DBProvider:     getEnv("RETAIL_ORDERS_PERSISTENCE_PROVIDER", ""),
+		DatabaseURL:    os.Getenv("DATABASE_URL"),
+		DBHost:         getEnv("DB_HOST", os.Getenv("RETAIL_ORDERS_PERSISTENCE_ENDPOINT")),
+		DBPort:         getEnv("DB_PORT", "5432"),
+		DBName:         getEnv("DB_NAME", getEnv("RETAIL_ORDERS_PERSISTENCE_NAME", "retaildb")),
+		DBUser:         getEnv("DB_USER", getEnv("RETAIL_ORDERS_PERSISTENCE_USERNAME", "postgres")),
+		DBPassword:     getEnv("DB_PASSWORD", getEnv("RETAIL_ORDERS_PERSISTENCE_PASSWORD", "postgres")),
+		DBSSLMode:      getEnv("DB_SSLMODE", "disable"),
+		SQSQueueURL:    os.Getenv("SQS_QUEUE_URL"),
+		WorkerDBMode:   getEnv("WORKER_DB_MODE", "light"),
+		AWSRegion:      getEnv("AWS_REGION", getEnv("AWS_DEFAULT_REGION", "us-east-1")),
+		AWSEndpointURL: getEnv("AWS_ENDPOINT_URL", os.Getenv("AWS_ENDPOINT_URL_SQS")),
 	}
 
 	// Hostname / Pod name

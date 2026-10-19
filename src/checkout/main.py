@@ -8,13 +8,26 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 import uvicorn
 from app.chaos import ChaosController, apply_chaos_middleware, chaos_router
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.metrics import init_metrics
 from app.repository import BaseCheckoutRepository, InMemoryCheckoutRepository, PostgresCheckoutRepository, create_repository
-from app.routes import api_router
+from app.routes import api_router, system_router
 from app.worker import CheckoutWorker, SQSService, burn_cpu, create_sqs_service, make_id
 
-__all__ = ["app", "create_app", "ChaosController", "CheckoutWorker", "InMemoryCheckoutRepository", "PostgresCheckoutRepository", "SQSService", "burn_cpu", "make_id"]
+__all__ = [
+    "app",
+    "create_app",
+    "ChaosController",
+    "CheckoutWorker",
+    "InMemoryCheckoutRepository",
+    "PostgresCheckoutRepository",
+    "SQSService",
+    "Settings",
+    "burn_cpu",
+    "create_repository",
+    "get_settings",
+    "make_id",
+]
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 
 
@@ -44,7 +57,9 @@ def create_app(
     app.add_exception_handler(HTTPException, lambda _, e: JSONResponse(status_code=e.status_code, content={"code": e.status_code, "message": str(e.detail)}))
     app.add_exception_handler(RequestValidationError, lambda _, e: JSONResponse(status_code=400, content={"code": 400, "message": str(e)}))
     app.include_router(chaos_router)
-    app.include_router(api_router)
+    app.include_router(system_router)
+    if mode != "worker":
+        app.include_router(api_router)
     return app
 
 

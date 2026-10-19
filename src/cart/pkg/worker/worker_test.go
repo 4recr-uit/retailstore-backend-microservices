@@ -19,10 +19,10 @@ import (
 )
 
 type mockSQS struct {
-	mu                sync.Mutex
-	receiveFunc       func(ctx context.Context, params *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error)
-	deletedHandles    []string
-	visibilityResets  []string
+	mu               sync.Mutex
+	receiveFunc      func(ctx context.Context, params *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error)
+	deletedHandles   []string
+	visibilityResets []string
 }
 
 func (m *mockSQS) SendMessage(ctx context.Context, params *sqs.SendMessageInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageOutput, error) {
