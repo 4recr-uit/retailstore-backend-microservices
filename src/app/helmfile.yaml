@@ -6,11 +6,12 @@ releases:
     values:
       - templates/components.yaml.gotmpl
       - templates/catalog.yaml.gotmpl
-      - app:
+      - nodeSelector: null
+        app:
           persistence:
-            provider: mysql
+            provider: in-memory
         mysql:
-          create: true
+          create: false
 
   - name: "carts"
     namespace: "default"
@@ -19,11 +20,16 @@ releases:
     values:
       - templates/components.yaml.gotmpl
       - templates/carts.yaml.gotmpl
-      - app:
-          persistence:
-            provider: dynamodb
-        dynamodb:
-          create: true
+      - database:
+          host: ""
+          secret:
+            create: false
+        api:
+          nodeSelector: null
+          serviceMonitor:
+            enabled: false
+        worker:
+          enabled: false
 
   - name: "orders"
     namespace: "default"
@@ -32,15 +38,16 @@ releases:
     values:
       - templates/components.yaml.gotmpl
       - templates/orders.yaml.gotmpl
-      - app:
-          persistence:
-            provider: postgres
-          messaging:
-            provider: rabbitmq
-        postgresql:
-          create: true
-        rabbitmq:
-          create: true
+      - database:
+          host: ""
+          secret:
+            create: false
+        api:
+          nodeSelector: null
+          serviceMonitor:
+            enabled: false
+        worker:
+          enabled: false
 
   - name: "checkout"
     namespace: "default"
@@ -49,13 +56,16 @@ releases:
     values:
       - templates/components.yaml.gotmpl
       - templates/checkout.yaml.gotmpl
-      - app:
-          persistence:
-            provider: redis
-          endpoints:
-            orders: http://orders:80
-        redis:
-          create: true
+      - database:
+          host: ""
+          secret:
+            create: false
+        api:
+          nodeSelector: null
+          serviceMonitor:
+            enabled: false
+        worker:
+          enabled: false
 
   - name: "ui"
     namespace: "default"
@@ -66,7 +76,8 @@ releases:
       - templates/components.yaml.gotmpl
       - templates/ui.yaml.gotmpl
       - templates/ingress.yaml.gotmpl
-      - app:
+      - nodeSelector: null
+        app:
           endpoints:
             catalog: http://catalog
             carts: http://carts

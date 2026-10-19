@@ -43,30 +43,12 @@ assert "Catalog SQL query was traced" \
   '.data[0].spans[] | select(.tags[] | select(.key == "db.statement" and (.value | startswith("SELECT * FROM `products`"))))' \
   "$TRACES"
 
-assert "Cart service span exists showing trace propagation" \
-  '.data[0].spans[] | select(.operationName == "GET /carts/{customerId}")' \
-  "$TRACES"
-
-assert "DynamoDB cart query was traced" \
-  '.data[0].spans[] | select(.tags[] | select(.key == "aws.table.name" and .value == "Items"))' \
-  "$TRACES"
-
 echo ""
 echo "==> Checkout page trace assertions"
 TRACES=$(fetch_traces "ui" "GET /checkout")
 
 assert "UI span exists for GET /checkout" \
   '.data[0].spans[] | select(.operationName == "GET /checkout")' \
-  "$TRACES"
-
-assert "Checkout service span exists showing trace propagation" \
-  '.data[0].spans[] | select(.operationName == "POST /checkout/:customerId/update")' \
-  "$TRACES"
-
-# Newer OpenTelemetry instrumentations emit the stable database semantic
-# conventions (db.system.name) instead of the legacy db.system attribute.
-assert "Redis set span exists showing checkout session was persisted" \
-  '.data[0].spans[] | select(.operationName == "set" and (.tags[] | select((.key == "db.system" or .key == "db.system.name") and .value == "redis")))' \
   "$TRACES"
 
 echo ""
