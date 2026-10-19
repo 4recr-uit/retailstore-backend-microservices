@@ -25,6 +25,7 @@ releases:
           secret:
             create: false
         api:
+          replicaCount: 1
           nodeSelector: null
           serviceMonitor:
             enabled: false
@@ -43,6 +44,7 @@ releases:
           secret:
             create: false
         api:
+          replicaCount: 1
           nodeSelector: null
           serviceMonitor:
             enabled: false
@@ -61,6 +63,7 @@ releases:
           secret:
             create: false
         api:
+          replicaCount: 1
           nodeSelector: null
           serviceMonitor:
             enabled: false
