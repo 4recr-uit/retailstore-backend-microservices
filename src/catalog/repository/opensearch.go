@@ -342,3 +342,91 @@ func (r *OpenSearchRepository) SearchProducts(keyword string, page, size int, ct
 
 	return products, nil
 }
+
+// InMemorySearchRepository implements SearchRepository using in-memory product data
+type InMemorySearchRepository struct {
+	products []model.Product
+}
+
+// NewInMemorySearchRepository creates a new in-memory search repository
+func NewInMemorySearchRepository() (*InMemorySearchRepository, error) {
+	repo := &InMemorySearchRepository{}
+	if err := repo.Reindex(); err != nil {
+		return nil, err
+	}
+	return repo, nil
+}
+
+// Reindex reloads product data from embedded JSON
+func (r *InMemorySearchRepository) Reindex() error {
+	productData, err := LoadProductData()
+	if err != nil {
+		return fmt.Errorf("failed to load product data: %w", err)
+	}
+	tagData, _ := LoadProductTagData()
+	tagMap := make(map[string]model.Tag)
+	for _, t := range tagData {
+		tagMap[t.Name] = model.Tag{Name: t.Name, DisplayName: t.DisplayName}
+	}
+
+	products := make([]model.Product, 0, len(productData))
+	for _, p := range productData {
+		tags := make([]model.Tag, 0, len(p.Tags))
+		for _, tagName := range p.Tags {
+			if t, ok := tagMap[tagName]; ok {
+				tags = append(tags, t)
+			} else {
+				tags = append(tags, model.Tag{Name: tagName})
+			}
+		}
+		products = append(products, model.Product{
+			ID:          p.ID,
+			Name:        p.Name,
+			Description: p.Description,
+			Price:       p.Price,
+			Tags:        tags,
+		})
+	}
+	r.products = products
+	return nil
+}
+
+// SearchProducts searches products by keyword across name, description, and tags
+func (r *InMemorySearchRepository) SearchProducts(keyword string, page, size int, ctx context.Context) ([]model.Product, error) {
+	kw := strings.ToLower(strings.TrimSpace(keyword))
+	matched := make([]model.Product, 0)
+	if kw == "" {
+		return matched, nil
+	}
+
+	for _, p := range r.products {
+		if strings.Contains(strings.ToLower(p.Name), kw) ||
+			strings.Contains(strings.ToLower(p.Description), kw) {
+			matched = append(matched, p)
+			continue
+		}
+		for _, t := range p.Tags {
+			if strings.Contains(strings.ToLower(t.Name), kw) ||
+				strings.Contains(strings.ToLower(t.DisplayName), kw) {
+				matched = append(matched, p)
+				break
+			}
+		}
+	}
+
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 {
+		size = 10
+	}
+	from := (page - 1) * size
+	if from >= len(matched) {
+		return make([]model.Product, 0), nil
+	}
+	to := from + size
+	if to > len(matched) {
+		to = len(matched)
+	}
+	return matched[from:to], nil
+}

@@ -11,5 +11,5 @@ spec:
     - name: wget
       image: busybox
       command: ['wget']
-      args: ['{{ include "checkout.fullname" . }}:{{ .Values.service.port }}/health']
+      args: ['{{ include "checkout.fullname" . }}:{{ .Values.api.service.port | default 80 }}/health']
   restartPolicy: Never

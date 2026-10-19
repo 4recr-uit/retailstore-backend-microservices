@@ -1,4 +1,4 @@
-{{- if .Values.securityGroups.create }}
+{{- if and .Values.securityGroups .Values.securityGroups.create }}
 apiVersion: vpcresources.k8s.aws/v1beta1
 kind: SecurityGroupPolicy
 metadata:

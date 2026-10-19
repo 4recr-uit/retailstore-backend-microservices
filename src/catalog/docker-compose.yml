@@ -16,9 +16,9 @@ services:
       - GIN_MODE=release
       - reschedule=on-node-failure
       - RETAIL_CATALOG_PERSISTENCE_PROVIDER=mysql
-      - RETAIL_CATALOG_PERSISTENCE_PASSWORD=${DB_PASSWORD}
+      - RETAIL_CATALOG_PERSISTENCE_PASSWORD=${DB_PASSWORD:-test123}
       - RETAIL_CATALOG_PERSISTENCE_ENDPOINT=catalog-db:3306
-      - RETAIL_CATALOG_SEARCH_ENABLED=false
+      - RETAIL_CATALOG_SEARCH_ENABLED=${SEARCH_ENABLED:-false}
     ports:
       - "8081:8080"
     healthcheck:
@@ -40,11 +40,11 @@ services:
       - no-new-privileges:true
     environment:
       - reschedule=on-node-failure
-      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD:-test123}
       - MYSQL_ALLOW_EMPTY_PASSWORD=true
       - MYSQL_DATABASE=catalogdb
       - MYSQL_USER=catalog_user
-      - MYSQL_PASSWORD=${DB_PASSWORD}
+      - MYSQL_PASSWORD=${DB_PASSWORD:-test123}
     healthcheck:
       test:
         [
@@ -55,7 +55,7 @@ services:
           "localhost",
           "-u",
           "catalog_user",
-          "-p${DB_PASSWORD}",
+          "-p${DB_PASSWORD:-test123}",
         ]
       interval: 10s
       timeout: 5s
