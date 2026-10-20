@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/aws-containers/retail-store-sample-app/catalog/model"
+	"github.com/aws-containers/retail-store-sample-app/catalog/repository"
 )
 
 type mockCatalogRepository struct {
@@ -315,4 +316,28 @@ func TestCatalogAPI_Reindex(t *testing.T) {
 		assert.Error(t, err)
 		assert.Equal(t, expectedErr, err)
 	})
+}
+
+func TestInMemorySearchRepository(t *testing.T) {
+	ctx := context.Background()
+
+	repo, err := repository.NewInMemorySearchRepository()
+	assert.NoError(t, err)
+	assert.NotNil(t, repo)
+
+	// SearchProducts("shoe", 1, 6, ctx) returns 1 product ("Levitator Oxfords")
+	products, err := repo.SearchProducts("shoe", 1, 6, ctx)
+	assert.NoError(t, err)
+	assert.Len(t, products, 1)
+	assert.Equal(t, "Levitator Oxfords", products[0].Name)
+
+	// SearchProducts("xyznonexistent123", 1, 6, ctx) returns an empty non-nil slice (len == 0)
+	emptyProducts, err := repo.SearchProducts("xyznonexistent123", 1, 6, ctx)
+	assert.NoError(t, err)
+	assert.NotNil(t, emptyProducts)
+	assert.Len(t, emptyProducts, 0)
+
+	// Reindex() returns nil
+	err = repo.Reindex()
+	assert.NoError(t, err)
 }

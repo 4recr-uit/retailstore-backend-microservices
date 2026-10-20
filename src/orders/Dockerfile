@@ -3,6 +3,9 @@ FROM golang:1.23-alpine AS builder
 
 WORKDIR /app
 
+ENV GOPROXY=https://proxy.golang.org,direct
+ENV GOTOOLCHAIN=auto
+
 # Cache dependencies
 COPY go.mod go.sum ./
 RUN go mod download

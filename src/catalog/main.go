@@ -86,14 +86,23 @@ func main() {
 		fmt.Println("OpenSearch is enabled, initializing...")
 		osRepo, err := repository.NewOpenSearchRepository(config.OpenSearch)
 		if err != nil {
-			log.Printf("Warning: Failed to initialize OpenSearch: %v\n", err)
+			log.Printf("Warning: Failed to initialize OpenSearch (%v), falling back to in-memory search\n", err)
 		} else {
 			// Initialize OpenSearch data
 			if err := osRepo.InitializeData(); err != nil {
-				log.Printf("Warning: Failed to initialize OpenSearch data: %v\n", err)
+				log.Printf("Warning: Failed to initialize OpenSearch data (%v), falling back to in-memory search\n", err)
 			} else {
 				searchRepo = osRepo
 				fmt.Println("OpenSearch initialized successfully")
+			}
+		}
+		if searchRepo == nil {
+			inMemSearch, err := repository.NewInMemorySearchRepository()
+			if err != nil {
+				log.Printf("Warning: Failed to initialize in-memory search: %v\n", err)
+			} else {
+				searchRepo = inMemSearch
+				fmt.Println("In-memory search initialized successfully")
 			}
 		}
 	} else {
