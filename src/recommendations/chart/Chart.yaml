@@ -1,6 +1,8 @@
 apiVersion: v2
 name: recommendations
-description: Helm chart for Retail Store Recommendations Service (Python FastAPI connecting to RDS MySQL catalogdb)
+description: >-
+  Helm chart for Retail Store Recommendations Service (Python FastAPI connecting
+  to RDS MySQL catalogdb)
 type: application
-version: 0.1.0
-appVersion: "1.0.0"
+version: 2.0.0
+appVersion: 1.0.0
