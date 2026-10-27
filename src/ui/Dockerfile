@@ -67,7 +67,6 @@ ENV SPRING_PROFILES_ACTIVE=prod
 WORKDIR /app
 USER appuser
 
-COPY ./ATTRIBUTION.md ./LICENSES.md
 COPY --chown=appuser:appuser --from=build-env /app.jar .
 
 EXPOSE 8080

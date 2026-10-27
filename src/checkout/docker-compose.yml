@@ -12,33 +12,38 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid
     environment:
-      - RETAIL_CHECKOUT_PERSISTENCE_PROVIDER=redis
-      - RETAIL_CHECKOUT_PERSISTENCE_REDIS_URL=redis://checkout-redis:6379
+      - APP_MODE=api
+      - RETAIL_CHECKOUT_PERSISTENCE_PROVIDER=postgres
+      - DB_HOST=checkout-db
+      - DB_PORT=5432
+      - DB_NAME=retaildb
+      - DB_USER=checkout_user
+      - DB_PASSWORD=${DB_PASSWORD:-test123}
     ports:
-      - '8085:8080'
+      - "8085:8080"
     healthcheck:
-      test: ['CMD-SHELL', 'curl -f http://localhost:8080/health || exit 1']
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 3
     depends_on:
-      checkout-redis:
+      checkout-db:
         condition: service_healthy
-    develop:
-      watch:
-        - action: rebuild
-          path: src
-        - action: rebuild
-          path: package.json
 
-  checkout-redis:
-    image: redis:6.0-alpine
-    hostname: checkout-redis
+  checkout-db:
+    image: postgres:16-alpine
+    hostname: checkout-db
     restart: always
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - POSTGRES_DB=retaildb
+      - POSTGRES_USER=checkout_user
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-test123}
     ports:
-      - '6379:6379'
+      - "5435:5432"
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 1s
-      timeout: 3s
-      retries: 30
+      test: ["CMD-SHELL", "pg_isready -d retaildb -U checkout_user"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

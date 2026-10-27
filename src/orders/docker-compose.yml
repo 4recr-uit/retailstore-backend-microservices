@@ -14,67 +14,41 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid
     environment:
-      - reschedule=on-node-failure
-      - SERVER_TOMCAT_ACCESSLOG_ENABLED=true
+      - APP_MODE=api
       - RETAIL_ORDERS_PERSISTENCE_PROVIDER=postgres
-      - RETAIL_ORDERS_PERSISTENCE_ENDPOINT=orders-db:5432
-      - RETAIL_ORDERS_PERSISTENCE_NAME=orders
-      - RETAIL_ORDERS_PERSISTENCE_USERNAME=orders_user
-      - RETAIL_ORDERS_PERSISTENCE_PASSWORD=${DB_PASSWORD:-test123}
-      - RETAIL_ORDERS_MESSAGING_PROVIDER=rabbitmq
-      - RETAIL_ORDERS_MESSAGING_RABBITMQ_ADDRESSES=rabbitmq:5672
-      - RETAIL_ORDERS_MESSAGING_RABBITMQ_USERNAME=rabbitmq
-      - RETAIL_ORDERS_MESSAGING_RABBITMQ_PASSWORD=${DB_PASSWORD:-test123}
+      - DB_HOST=orders-db
+      - DB_PORT=5432
+      - DB_NAME=orders
+      - DB_USER=orders_user
+      - DB_PASSWORD=${DB_PASSWORD:-test123}
+      - DB_SSLMODE=disable
     ports:
       - "8083:8080"
     depends_on:
       orders-db:
         condition: service_healthy
-        restart: true
     healthcheck:
       test:
-        ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+        ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 3
       start_period: 15s
-    develop:
-      watch:
-        - action: rebuild
-          path: src
-        - action: rebuild
-          path: pom.xml
 
-  # nosemgrep: yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service
   orders-db:
-    image: postgres:16.1
+    image: postgres:16-alpine
     hostname: orders-db
     restart: always
     security_opt:
       - no-new-privileges:true
     environment:
-      - reschedule=on-node-failure
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-test123}
       - POSTGRES_DB=orders
       - POSTGRES_USER=orders_user
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-test123}
     ports:
-      - "5432:5432"
+      - "5434:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -d orders -U orders_user"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 30
-
-  # nosemgrep: yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service
-  rabbitmq:
-    image: rabbitmq:3-management
-    hostname: rabbitmq
-    restart: always
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      - RABBITMQ_DEFAULT_USER=rabbitmq
-      - RABBITMQ_DEFAULT_PASS=${DB_PASSWORD:-test123}
-    ports:
-      - "61616:61616"
-      - "8161:8161"
+      retries: 10
