@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	appconfig "github.com/aws-containers/retail-store-sample-app/cart/pkg/config"
 	"log"
 	"os"
 	"sync"
@@ -133,7 +134,7 @@ func (w *Worker) Stop() {
 	// Wait for polling routines to exit
 	select {
 	case <-w.shutdownDone:
-	case <-time.After(10 * time.Second):
+	case <-time.After(appconfig.EnvSeconds("WORKER_SHUTDOWN_TIMEOUT_SECONDS", 10)):
 	}
 	// Wait for in-flight tasks
 	w.inFlightWg.Wait()
@@ -149,14 +150,14 @@ func (w *Worker) pollLoop(ctx context.Context, workerID int) {
 		}
 
 		if w.cfg.QueueURL == "" {
-			time.Sleep(1 * time.Second)
+			time.Sleep(appconfig.EnvSeconds("WORKER_POLL_BACKOFF_SECONDS", 1))
 			continue
 		}
 
 		input := &sqs.ReceiveMessageInput{
 			QueueUrl:            aws.String(w.cfg.QueueURL),
 			MaxNumberOfMessages: w.cfg.MaxMessages,
-			WaitTimeSeconds:     20,
+			WaitTimeSeconds:     appconfig.SQSWaitTime(),
 		}
 
 		output, err := w.sqsClient.ReceiveMessage(ctx, input)
@@ -164,7 +165,7 @@ func (w *Worker) pollLoop(ctx context.Context, workerID int) {
 			if ctx.Err() != nil {
 				return
 			}
-			time.Sleep(1 * time.Second)
+			time.Sleep(appconfig.EnvSeconds("WORKER_POLL_BACKOFF_SECONDS", 1))
 			continue
 		}
 
@@ -193,7 +194,7 @@ func (w *Worker) returnUnstartedMessages(messages []sqstypes.Message) {
 			continue
 		}
 		// Use fresh context with 5s timeout to reset visibility
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), appconfig.EnvSeconds("SQS_REQUEST_TIMEOUT_SECONDS", 5))
 		_, err := w.sqsClient.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
 			QueueUrl:          aws.String(w.cfg.QueueURL),
 			ReceiptHandle:     msg.ReceiptHandle,
@@ -248,7 +249,7 @@ func (w *Worker) processMessage(msg sqstypes.Message) {
 	job.DBMode = dbMode
 
 	// Process job in Store with isolated timeout
-	dbCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	dbCtx, cancel := context.WithTimeout(context.Background(), appconfig.EnvSeconds("WORKER_DB_TIMEOUT_SECONDS", 10))
 	isNew, err := w.store.ProcessJob(dbCtx, job)
 	cancel()
 
@@ -281,7 +282,7 @@ func (w *Worker) processMessage(msg sqstypes.Message) {
 
 	// 4. Delete message from SQS on success or duplicate
 	if err == nil && msg.ReceiptHandle != nil {
-		delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		delCtx, delCancel := context.WithTimeout(context.Background(), appconfig.EnvSeconds("SQS_REQUEST_TIMEOUT_SECONDS", 5))
 		_, delErr := w.sqsClient.DeleteMessage(delCtx, &sqs.DeleteMessageInput{
 			QueueUrl:      aws.String(w.cfg.QueueURL),
 			ReceiptHandle: msg.ReceiptHandle,

@@ -3,3 +3,7 @@ Dockerfile
 docker-compose.yml
 .gitignore
 scripts
+
+# Runtime configuration is supplied when the container starts.
+.env
+.env.*

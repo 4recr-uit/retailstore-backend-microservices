@@ -202,7 +202,7 @@ func TestPostgresConnString(t *testing.T) {
 			DBName:     "retaildb",
 			DBSSLMode:  "disable",
 		}
-		expected := "host=localhost port=5432 user=postgres password=password123 dbname=retaildb sslmode=disable"
+		expected := "postgres://postgres:password123@localhost:5432/retaildb?connect_timeout=10&sslmode=disable"
 		if got := cfg.PostgresConnString(); got != expected {
 			t.Errorf("expected %q, got %q", expected, got)
 		}
@@ -217,7 +217,7 @@ func TestPostgresConnString(t *testing.T) {
 			DBName:     "retaildb",
 			DBSSLMode:  "disable",
 		}
-		expected := "host=dbhost port=5433 user=postgres password=password123 dbname=retaildb sslmode=disable"
+		expected := "postgres://postgres:password123@dbhost:5433/retaildb?connect_timeout=10&sslmode=disable"
 		if got := cfg.PostgresConnString(); got != expected {
 			t.Errorf("expected %q, got %q", expected, got)
 		}

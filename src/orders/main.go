@@ -9,11 +9,9 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 
 	"github.com/aws-containers/retail-store-sample-app/orders/pkg/api"
@@ -78,7 +76,7 @@ func main() {
 	}
 
 	// Shutdown HTTP Server
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), config.EnvSeconds("HTTP_SHUTDOWN_TIMEOUT_SECONDS", 10))
 	defer shutdownCancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
@@ -92,12 +90,7 @@ func initSQSClient(ctx context.Context, cfg *config.Config) (*sqs.Client, error)
 	var optFns []func(*awsConfig.LoadOptions) error
 	optFns = append(optFns, awsConfig.WithRegion(cfg.AWSRegion))
 
-	// Local development / LocalStack credentials fallback
-	if os.Getenv("AWS_ACCESS_KEY_ID") == "" {
-		optFns = append(optFns, awsConfig.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider("test", "test", ""),
-		))
-	}
+	// Credentials come from the SDK chain (env locally, Pod Identity on EKS).
 
 	awsCfg, err := awsConfig.LoadDefaultConfig(ctx, optFns...)
 	if err != nil {

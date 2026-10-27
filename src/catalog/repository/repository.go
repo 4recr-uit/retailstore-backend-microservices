@@ -8,6 +8,7 @@ import (
 	"github.com/aws-containers/retail-store-sample-app/catalog/config"
 	"github.com/aws-containers/retail-store-sample-app/catalog/model"
 	"github.com/glebarez/sqlite"
+	drivermysql "github.com/go-sql-driver/mysql"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/plugin/opentelemetry/tracing"
@@ -25,25 +26,63 @@ type CatalogRepository interface {
 }
 
 func createMySQLDatabase(config config.DatabaseConfiguration) (*gorm.DB, error) {
-	connectionString := fmt.Sprintf("%s:%s@tcp(%s)/%s?timeout=%ds&charset=utf8mb4&parseTime=True&loc=Local", config.User, config.Password, config.Endpoint, config.Name, config.ConnectTimeout)
+	if config.Endpoint == "" || config.Name == "" || config.User == "" || config.Password == "" {
+		return nil, fmt.Errorf("MySQL requires catalog endpoint, database, user and password")
+	}
+	timeout := config.ConnectTimeout
+	if timeout <= 0 {
+		timeout = 5
+	}
+	dsn := drivermysql.NewConfig()
+	dsn.User, dsn.Passwd, dsn.Net, dsn.Addr, dsn.DBName = config.User, config.Password, "tcp", config.Endpoint, config.Name
+	dsn.Timeout = time.Duration(timeout) * time.Second
+	dsn.ReadTimeout, dsn.WriteTimeout = dsn.Timeout, dsn.Timeout
+	dsn.ParseTime = true
+	dsn.Params = map[string]string{"charset": "utf8mb4"}
+	if config.TLS {
+		dsn.TLSConfig = "true"
+	}
+	connectionString := dsn.FormatDSN()
+	attempts := config.ConnectAttempts
+	if attempts <= 0 {
+		attempts = 6
+	}
+	retrySeconds := config.ConnectRetrySeconds
+	if retrySeconds <= 0 {
+		retrySeconds = 5
+	}
+	maxOpen := config.MaxOpenConns
+	if maxOpen <= 0 {
+		maxOpen = 10
+	}
+	maxIdle := config.MaxIdleConns
+	if maxIdle < 0 {
+		maxIdle = 0
+	}
+	lifetime := config.ConnMaxLifetimeSeconds
+	if lifetime <= 0 {
+		lifetime = 1800
+	}
 
 	var db *gorm.DB
 	var err error
 
-	for i := 0; i < 6; i++ {
+	for i := 0; i < attempts; i++ {
 		db, err = gorm.Open(mysql.Open(connectionString), &gorm.Config{})
 		if err == nil {
 			sqlDB, sqlErr := db.DB()
 			if sqlErr != nil {
 				return nil, fmt.Errorf("failed to get underlying sql.DB: %w", sqlErr)
 			}
-			sqlDB.SetMaxOpenConns(10)
-			sqlDB.SetMaxIdleConns(5)
-			sqlDB.SetConnMaxLifetime(30 * time.Minute)
+			sqlDB.SetMaxOpenConns(maxOpen)
+			sqlDB.SetMaxIdleConns(maxIdle)
+			sqlDB.SetConnMaxLifetime(time.Duration(lifetime) * time.Second)
 			return db, nil
 		}
 		fmt.Printf("Waiting for MySQL to be ready... (%v)\n", err)
-		time.Sleep(5 * time.Second)
+		if i+1 < attempts {
+			time.Sleep(time.Duration(retrySeconds) * time.Second)
+		}
 	}
 
 	return nil, err

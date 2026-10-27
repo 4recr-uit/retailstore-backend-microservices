@@ -145,7 +145,7 @@ def create_sqs_service() -> SQSService:
         return SQSService(queue_url="", client=None)
 
     try:
-        cfg = Config(max_pool_connections=50)
+        cfg = Config(max_pool_connections=settings.sqs_max_pool_connections)
         client = boto3.client("sqs", endpoint_url=endpoint_url, region_name=region, config=cfg)
         return SQSService(queue_url=queue_url, client=client)
     except Exception as exc:
@@ -195,7 +195,7 @@ class CheckoutWorker:
         if self.executor:
             self.executor.shutdown(wait=True, cancel_futures=False)
         if self.worker_thread and self.worker_thread.is_alive():
-            self.worker_thread.join(timeout=5)
+            self.worker_thread.join(timeout=get_settings().worker_shutdown_timeout)
         logger.info("Checkout worker stopped.")
 
     def process_message(self, message: dict[str, Any]) -> None:

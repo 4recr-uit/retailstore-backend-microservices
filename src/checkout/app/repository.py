@@ -6,7 +6,7 @@ import logging
 import threading
 import time
 from typing import Any, Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -193,22 +193,34 @@ def create_repository() -> BaseCheckoutRepository:
             if url.startswith("postgres://"):
                 url = "postgresql://" + url[len("postgres://"):]
         else:
-            host_port = endpoint or "localhost:5432"
+            if not endpoint or not settings.db_name or not settings.db_user or not settings.db_password:
+                raise ValueError("PostgreSQL requires DB_HOST, DB_NAME, DB_USER and DB_PASSWORD or DATABASE_URL")
+            host_port = endpoint
             db_name = settings.db_name
             db_user = settings.db_user
             db_password = settings.db_password
-            url = f"postgresql://{quote_plus(db_user)}:{quote_plus(db_password)}@{host_port}/{db_name}"
+            url = f"postgresql://{quote(db_user, safe='')}:{quote(db_password, safe='')}@{host_port}/{db_name}"
 
+        # An explicit URL owns all connection parameters, including TLS.
+        connect_args = {} if database_url else {
+            "connect_timeout": settings.db_connect_timeout,
+            "sslmode": settings.db_sslmode,
+        }
+        if not database_url and settings.db_sslrootcert:
+            connect_args["sslrootcert"] = settings.db_sslrootcert
         try:
             engine = create_engine(
                 url,
-                pool_size=2,
-                max_overflow=1,
+                pool_size=settings.db_pool_size,
+                max_overflow=settings.db_max_overflow,
                 pool_pre_ping=True,
+                pool_timeout=settings.db_pool_timeout,
+                connect_args=connect_args,
             )
             return PostgresCheckoutRepository(engine)
         except Exception as exc:
-            logger.error("Failed to connect to PostgreSQL at %s (%s). Falling back to in-memory.", url, exc)
-            return InMemoryCheckoutRepository()
+            # Do not print a URL containing credentials or silently discard persistence.
+            logger.error("PostgreSQL initialization failed")
+            raise RuntimeError("PostgreSQL initialization failed; check database configuration") from exc
 
     return InMemoryCheckoutRepository()

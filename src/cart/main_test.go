@@ -480,6 +480,7 @@ func TestLoadConfig(t *testing.T) {
 		t.Setenv("WORKER_CONCURRENCY", "")
 		t.Setenv("WORKER_DB_MODE", "")
 		t.Setenv("AWS_REGION", "")
+		t.Setenv("AWS_DEFAULT_REGION", "")
 		t.Setenv("AWS_ENDPOINT_URL", "")
 		t.Setenv("LOCALSTACK_ENDPOINT", "")
 
@@ -488,11 +489,11 @@ func TestLoadConfig(t *testing.T) {
 		assert.Equal(t, "8080", cfg.Port)
 		assert.Equal(t, "cart", cfg.Service)
 		assert.Equal(t, "cart-queue", cfg.QueueName)
-		assert.Equal(t, "http://localhost:4566/000000000000/cart-queue", cfg.QueueURL)
+		assert.Empty(t, cfg.QueueURL)
 		assert.Equal(t, int32(1), cfg.MaxMessages)
 		assert.Equal(t, 1, cfg.WorkerConcurrency)
 		assert.Equal(t, "light", cfg.DBMode)
-		assert.Equal(t, "us-east-1", cfg.AWSRegion)
+		assert.Empty(t, cfg.AWSRegion)
 		assert.Equal(t, "", cfg.AWSEndpointURL)
 	})
 

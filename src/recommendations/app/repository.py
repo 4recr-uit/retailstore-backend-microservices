@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: MIT-0
 
 import logging
+import ssl
 from typing import Any, Protocol
-from urllib.parse import quote_plus
+from urllib.parse import quote
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -117,18 +118,22 @@ class MySQLRecommendationRepository:
         if engine is not None:
             self.engine = engine
         else:
-            user = quote_plus(config["db_user"])
-            password = quote_plus(config["db_password"])
+            user = quote(config["db_user"], safe="")
+            password = quote(config["db_password"], safe="")
             endpoint = config["endpoint"]
             db_name = config["db_name"]
             url = f"mysql+pymysql://{user}:{password}@{endpoint}/{db_name}?charset=utf8mb4"
+            connect_args = {"connect_timeout": config.get("connect_timeout", 5)}
+            if config.get("tls") or config.get("ssl_ca"):
+                connect_args["ssl"] = ssl.create_default_context(cafile=config.get("ssl_ca") or None)
             self.engine = create_engine(
                 url,
-                pool_size=3,
-                max_overflow=2,
+                pool_size=config.get("pool_size", 3),
+                max_overflow=config.get("max_overflow", 2),
                 pool_pre_ping=True,
-                pool_recycle=1800,
-                connect_args={"connect_timeout": config.get("connect_timeout", 5)},
+                pool_recycle=config.get("pool_recycle", 1800),
+                pool_timeout=config.get("pool_timeout", 30),
+                connect_args=connect_args,
             )
             logger.info("Initialized MySQL repository targeting %s/%s", endpoint, db_name)
 

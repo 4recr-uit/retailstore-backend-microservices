@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	appconfig "github.com/aws-containers/retail-store-sample-app/orders/pkg/config"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -112,20 +113,20 @@ func (w *Worker) Start(ctx context.Context) {
 		out, err := w.sqsClient.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 			QueueUrl:            aws.String(w.queueURL),
 			MaxNumberOfMessages: int32(w.maxMessages),
-			WaitTimeSeconds:     20,
+			WaitTimeSeconds:     appconfig.SQSWaitTime(),
 		})
 		if err != nil {
 			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
 				log.Println("[worker] ReceiveMessage canceled by context")
 				return
 			}
-			log.Printf("[worker] ReceiveMessage error: %v (retrying in 2s)", err)
+			log.Printf("[worker] ReceiveMessage error: %v (retrying after configured backoff)", err)
 			select {
 			case <-ctx.Done():
 				return
 			case <-w.stopChan:
 				return
-			case <-time.After(2 * time.Second):
+			case <-time.After(appconfig.EnvSeconds("WORKER_POLL_BACKOFF_SECONDS", 2)):
 				continue
 			}
 		}
@@ -197,7 +198,7 @@ func (w *Worker) returnMessageToQueue(msg sqsTypes.Message) {
 	}
 
 	// Use background context with short timeout to ensure visibility reset completes during shutdown
-	resetCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	resetCtx, cancel := context.WithTimeout(context.Background(), appconfig.EnvSeconds("SQS_REQUEST_TIMEOUT_SECONDS", 5))
 	defer cancel()
 
 	_, err := w.sqsClient.ChangeMessageVisibility(resetCtx, &sqs.ChangeMessageVisibilityInput{
@@ -245,7 +246,7 @@ func (w *Worker) handleMessage(msg sqsTypes.Message) {
 
 	status := "success"
 	// Perform DB operation
-	dbCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	dbCtx, cancel := context.WithTimeout(context.Background(), appconfig.EnvSeconds("WORKER_DB_TIMEOUT_SECONDS", 10))
 	defer cancel()
 
 	switch effectiveDBMode {
@@ -294,7 +295,7 @@ func (w *Worker) handleMessage(msg sqsTypes.Message) {
 
 	// 3. DeleteMessage upon success or duplicate
 	if status == "success" || status == "duplicate" {
-		delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		delCtx, delCancel := context.WithTimeout(context.Background(), appconfig.EnvSeconds("SQS_REQUEST_TIMEOUT_SECONDS", 5))
 		_, err := w.sqsClient.DeleteMessage(delCtx, &sqs.DeleteMessageInput{
 			QueueUrl:      aws.String(w.queueURL),
 			ReceiptHandle: msg.ReceiptHandle,

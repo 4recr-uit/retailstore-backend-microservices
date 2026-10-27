@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
+	appconfig "github.com/aws-containers/retail-store-sample-app/cart/pkg/config"
 
 	"github.com/aws-containers/retail-store-sample-app/cart/pkg/model"
 	_ "github.com/lib/pq"
@@ -18,12 +18,14 @@ type PostgresStore struct {
 
 // NewPostgresStore creates a new PostgresStore and runs initial migrations.
 func NewPostgresStore(db *sql.DB) (*PostgresStore, error) {
-	db.SetMaxOpenConns(3)
-	db.SetMaxIdleConns(2)
-	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetMaxOpenConns(appconfig.EnvInt("DB_MAX_OPEN_CONNS", 3))
+	db.SetMaxIdleConns(appconfig.EnvInt("DB_MAX_IDLE_CONNS", 2))
+	db.SetConnMaxLifetime(appconfig.EnvSeconds("DB_CONN_MAX_LIFETIME_SECONDS", 300))
 
 	p := &PostgresStore{db: db}
-	if err := p.migrate(context.Background()); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), appconfig.EnvSeconds("DB_CONNECT_TIMEOUT_SECONDS", 10))
+	defer cancel()
+	if err := p.migrate(ctx); err != nil {
 		return nil, fmt.Errorf("failed to run postgres migrations: %w", err)
 	}
 

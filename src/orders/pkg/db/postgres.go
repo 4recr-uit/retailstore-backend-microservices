@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	appconfig "github.com/aws-containers/retail-store-sample-app/orders/pkg/config"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,11 +55,11 @@ func NewPostgresRepository(connStr string) (*PostgresRepository, error) {
 	}
 
 	// Strictly set connection limits as specified
-	db.SetMaxOpenConns(3)
-	db.SetMaxIdleConns(2)
-	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetMaxOpenConns(appconfig.EnvInt("DB_MAX_OPEN_CONNS", 3))
+	db.SetMaxIdleConns(appconfig.EnvInt("DB_MAX_IDLE_CONNS", 2))
+	db.SetConnMaxLifetime(appconfig.EnvSeconds("DB_CONN_MAX_LIFETIME_SECONDS", 300))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), appconfig.EnvSeconds("DB_CONNECT_TIMEOUT_SECONDS", 10))
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
