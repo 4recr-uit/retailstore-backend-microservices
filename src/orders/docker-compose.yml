@@ -14,16 +14,25 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid
     environment:
-      - APP_MODE=api
-      - RETAIL_ORDERS_PERSISTENCE_PROVIDER=postgres
-      - DB_HOST=orders-db
-      - DB_PORT=5432
-      - DB_NAME=orders
-      - DB_USER=orders_user
-      - DB_PASSWORD=${DB_PASSWORD:-test123}
-      - DB_SSLMODE=disable
+      - APP_MODE=${ORDERS_APP_MODE:-api}
+      - RETAIL_ORDERS_PERSISTENCE_PROVIDER=${RETAIL_ORDERS_PERSISTENCE_PROVIDER:-postgres}
+      - DB_HOST=${ORDERS_DB_HOST-orders-db}
+      - DB_PORT=${ORDERS_DB_CONNECTION_PORT:-5432}
+      - DB_NAME=${ORDERS_DB_NAME:-orders}
+      - DB_USER=${ORDERS_DB_USER:-orders_user}
+      - DB_PASSWORD=${ORDERS_DB_PASSWORD:-${DB_PASSWORD:-test123}}
+      - DB_SSLMODE=${ORDERS_DB_SSLMODE:-disable}
+      - DATABASE_URL=${ORDERS_DATABASE_URL:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-test}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-test}
+      - AWS_ENDPOINT_URL=${AWS_ENDPOINT_URL:-}
+      - SQS_QUEUE_URL=${ORDERS_SQS_QUEUE_URL:-}
+      - SQS_MAX_MESSAGES=${SQS_MAX_MESSAGES:-1}
+      - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-1}
+      - WORKER_DB_MODE=${WORKER_DB_MODE:-light}
     ports:
-      - "8083:8080"
+      - "${ORDERS_PORT:-8083}:8080"
     depends_on:
       orders-db:
         condition: service_healthy
@@ -42,13 +51,13 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
-      - POSTGRES_DB=orders
-      - POSTGRES_USER=orders_user
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-test123}
+      - POSTGRES_DB=${ORDERS_DB_NAME:-orders}
+      - POSTGRES_USER=${ORDERS_DB_USER:-orders_user}
+      - POSTGRES_PASSWORD=${ORDERS_DB_PASSWORD:-${DB_PASSWORD:-test123}}
     ports:
-      - "5434:5432"
+      - "${ORDERS_DB_PORT:-5434}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -d orders -U orders_user"]
+      test: ["CMD-SHELL", "pg_isready -d \"$$POSTGRES_DB\" -U \"$$POSTGRES_USER\""]
       interval: 5s
       timeout: 5s
       retries: 10

@@ -12,15 +12,26 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid
     environment:
-      - APP_MODE=api
-      - RETAIL_CHECKOUT_PERSISTENCE_PROVIDER=postgres
-      - DB_HOST=checkout-db
-      - DB_PORT=5432
-      - DB_NAME=retaildb
-      - DB_USER=checkout_user
-      - DB_PASSWORD=${DB_PASSWORD:-test123}
+      - APP_MODE=${CHECKOUT_APP_MODE:-api}
+      - RETAIL_CHECKOUT_PERSISTENCE_PROVIDER=${RETAIL_CHECKOUT_PERSISTENCE_PROVIDER:-postgres}
+      - DB_HOST=${CHECKOUT_DB_HOST-checkout-db}
+      - DB_PORT=${CHECKOUT_DB_CONNECTION_PORT:-5432}
+      - DB_NAME=${CHECKOUT_DB_NAME:-retaildb}
+      - DB_USER=${CHECKOUT_DB_USER:-checkout_user}
+      - DB_PASSWORD=${CHECKOUT_DB_PASSWORD:-${DB_PASSWORD:-test123}}
+      - DATABASE_URL=${CHECKOUT_DATABASE_URL:-}
+      - RETAIL_CHECKOUT_SHIPPING_NAME_PREFIX=${RETAIL_CHECKOUT_SHIPPING_NAME_PREFIX:-}
+      - AWS_DEFAULT_REGION=${AWS_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-test}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-test}
+      - AWS_ENDPOINT_URL=${AWS_ENDPOINT_URL:-}
+      - SQS_QUEUE_URL=${CHECKOUT_SQS_QUEUE_URL:-}
+      - SQS_MAX_MESSAGES=${SQS_MAX_MESSAGES:-1}
+      - SQS_WAIT_TIME_SECONDS=${SQS_WAIT_TIME_SECONDS:-20}
+      - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-1}
+      - WORKER_DB_MODE=${WORKER_DB_MODE:-light}
     ports:
-      - "8085:8080"
+      - "${CHECKOUT_PORT:-8085}:8080"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
       interval: 10s
@@ -37,13 +48,13 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
-      - POSTGRES_DB=retaildb
-      - POSTGRES_USER=checkout_user
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-test123}
+      - POSTGRES_DB=${CHECKOUT_DB_NAME:-retaildb}
+      - POSTGRES_USER=${CHECKOUT_DB_USER:-checkout_user}
+      - POSTGRES_PASSWORD=${CHECKOUT_DB_PASSWORD:-${DB_PASSWORD:-test123}}
     ports:
-      - "5435:5432"
+      - "${CHECKOUT_DB_PORT:-5435}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -d retaildb -U checkout_user"]
+      test: ["CMD-SHELL", "pg_isready -d \"$$POSTGRES_DB\" -U \"$$POSTGRES_USER\""]
       interval: 5s
       timeout: 5s
       retries: 10
