@@ -1,0 +1,277 @@
+# =============================================================================
+# Retail Store Backend — Root Docker Compose (Phase 3)
+# =============================================================================
+# Usage:
+#   cp .env.example .env            # first-time setup (values are ready to use)
+#   docker compose up -d            # start all backend services + databases
+#   docker compose up -d --build    # rebuild images before starting
+#   docker compose down             # stop and remove containers (data persisted in volumes)
+#   docker compose down -v          # stop and remove containers AND volumes (clean slate)
+#
+# This file starts:
+#   - 1 PostgreSQL (shared, database: retaildb — schemas created by each service)
+#   - 1 MySQL 8.0 (shared, database: catalogdb)
+#   - 5 Backend Microservices: catalog, recommendations, cart, orders, checkout
+#
+# UI is intentionally excluded. To add the UI for a demo session:
+#   docker compose -f docker-compose.yml -f docker-compose.ui.yml up -d
+#
+# To enable SQS Worker mode with LocalStack, copy docker-compose.local.yml settings
+# and set CART/ORDERS/CHECKOUT_APP_MODE=worker + SQS_QUEUE_URL variables in .env.
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Infrastructure: Shared PostgreSQL (retaildb)
+  # Schemas per service (auto-migrated on startup):
+  #   cart.carts, cart.cart_items, cart.processed_jobs
+  #   orders.orders, orders.order_items, orders.shipping_addresses
+  #   checkout.checkout_sessions, checkout.processed_jobs
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    hostname: postgres
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_DB: retaildb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-test123}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d retaildb -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Infrastructure: Shared MySQL 8.0 (catalogdb)
+  # Used by: catalog (product data + seed), recommendations (read-only)
+  # ---------------------------------------------------------------------------
+  mysql:
+    image: mysql:8.0
+    hostname: mysql
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      MYSQL_DATABASE: catalogdb
+      MYSQL_USER: catalog_user
+      MYSQL_PASSWORD: ${DB_PASSWORD:-test123}
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-test123}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u catalog_user -p$$MYSQL_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Catalog Service — Go (Gin) + MySQL
+  # Manages product catalog. Seeds sample data into MySQL on first start.
+  # ---------------------------------------------------------------------------
+  catalog:
+    build:
+      context: src/catalog
+    hostname: catalog
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      GIN_MODE: release
+      RETAIL_CATALOG_PERSISTENCE_PROVIDER: mysql
+      RETAIL_CATALOG_PERSISTENCE_ENDPOINT: mysql:3306
+      RETAIL_CATALOG_PERSISTENCE_DB_NAME: catalogdb
+      RETAIL_CATALOG_PERSISTENCE_USER: catalog_user
+      RETAIL_CATALOG_PERSISTENCE_PASSWORD: ${DB_PASSWORD:-test123}
+      RETAIL_CATALOG_SEARCH_ENABLED: "false"
+    ports:
+      - "${CATALOG_PORT:-8081}:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Recommendations Service — Python (FastAPI) + MySQL (read from catalogdb)
+  # Waits for catalog to be healthy (ensures schema + seed data exists).
+  # ---------------------------------------------------------------------------
+  recommendations:
+    build:
+      context: src/recommendations
+    hostname: recommendations
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      RETAIL_RECOMMENDATIONS_PERSISTENCE_PROVIDER: mysql
+      RETAIL_RECOMMENDATIONS_PERSISTENCE_ENDPOINT: mysql:3306
+      RETAIL_RECOMMENDATIONS_PERSISTENCE_DB_NAME: catalogdb
+      RETAIL_RECOMMENDATIONS_PERSISTENCE_USER: catalog_user
+      RETAIL_RECOMMENDATIONS_PERSISTENCE_PASSWORD: ${DB_PASSWORD:-test123}
+    ports:
+      - "${RECOMMENDATIONS_PORT:-8080}:8080"
+    depends_on:
+      catalog:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Cart Service — Go (Gin) + PostgreSQL (schema: cart)
+  # Single image, API mode by default.
+  # Set CART_APP_MODE=worker + CART_SQS_QUEUE_URL to enable SQS consumer mode.
+  # Uses DATABASE_URL to avoid collision with generic DB_* vars of other services.
+  # ---------------------------------------------------------------------------
+  cart:
+    build:
+      context: src/cart
+    hostname: carts
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid
+    environment:
+      APP_MODE: ${CART_APP_MODE:-api}
+      RETAIL_CART_PERSISTENCE_PROVIDER: postgres
+      DATABASE_URL: postgres://postgres:${DB_PASSWORD:-test123}@postgres:5432/retaildb?sslmode=disable
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
+      SQS_QUEUE_URL: ${CART_SQS_QUEUE_URL:-}
+      SQS_MAX_MESSAGES: ${SQS_MAX_MESSAGES:-1}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
+      WORKER_DB_MODE: ${WORKER_DB_MODE:-light}
+    ports:
+      - "${CART_PORT:-8082}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Orders Service — Go + PostgreSQL (schema: orders)
+  # Single image, API mode by default.
+  # Set ORDERS_APP_MODE=worker + ORDERS_SQS_QUEUE_URL to enable SQS consumer mode.
+  # ---------------------------------------------------------------------------
+  orders:
+    build:
+      context: src/orders
+    hostname: orders
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid
+    environment:
+      APP_MODE: ${ORDERS_APP_MODE:-api}
+      RETAIL_ORDERS_PERSISTENCE_PROVIDER: postgres
+      DATABASE_URL: postgres://postgres:${DB_PASSWORD:-test123}@postgres:5432/retaildb?sslmode=disable
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
+      SQS_QUEUE_URL: ${ORDERS_SQS_QUEUE_URL:-}
+      SQS_MAX_MESSAGES: ${SQS_MAX_MESSAGES:-1}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
+      WORKER_DB_MODE: ${WORKER_DB_MODE:-light}
+    ports:
+      - "${ORDERS_PORT:-8083}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Checkout Service — Python (FastAPI) + PostgreSQL (schema: checkout)
+  # Single image, API mode by default.
+  # Set CHECKOUT_APP_MODE=worker + CHECKOUT_SQS_QUEUE_URL to enable SQS consumer mode.
+  # ---------------------------------------------------------------------------
+  checkout:
+    build:
+      context: src/checkout
+    hostname: checkout
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid
+    environment:
+      APP_MODE: ${CHECKOUT_APP_MODE:-api}
+      RETAIL_CHECKOUT_PERSISTENCE_PROVIDER: postgres
+      DATABASE_URL: postgres://postgres:${DB_PASSWORD:-test123}@postgres:5432/retaildb?sslmode=disable
+      RETAIL_CHECKOUT_SHIPPING_NAME_PREFIX: ${RETAIL_CHECKOUT_SHIPPING_NAME_PREFIX:-}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
+      SQS_QUEUE_URL: ${CHECKOUT_SQS_QUEUE_URL:-}
+      SQS_MAX_MESSAGES: ${SQS_MAX_MESSAGES:-1}
+      SQS_WAIT_TIME_SECONDS: ${SQS_WAIT_TIME_SECONDS:-20}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
+      WORKER_DB_MODE: ${WORKER_DB_MODE:-light}
+    ports:
+      - "${CHECKOUT_PORT:-8085}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  postgres_data:
+    driver: local
+  mysql_data:
+    driver: local
