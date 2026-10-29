@@ -38,7 +38,7 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "recommendations.configMapName" . }}
-            {{- if .Values.app.persistence.secret.create }}
+            {{- if eq .Values.app.persistence.provider "mysql" }}
             - secretRef:
                 name: {{ include "recommendations.secretName" . }}
             {{- end }}

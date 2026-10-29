@@ -141,6 +141,56 @@ The following options are available to deploy the application using Terraform:
 | [Amazon ECS](./terraform/ecs/default/)           | Deploys the application to Amazon ECS using other AWS services for dependencies, such as RDS, DynamoDB etc.     |
 | [AWS App Runner](./terraform/apprunner/)         | Deploys the application to AWS App Runner using other AWS services for dependencies, such as RDS, DynamoDB etc. |
 
+### API and worker ServiceAccounts
+
+The Cart, Orders, and Checkout charts use separate API and worker ServiceAccounts: `<service>-api` and `<service>-worker`. The infrastructure repository creates these accounts and associates their EKS Pod Identity roles; create them in the release namespace before deploying the charts. By default the charts reference these existing accounts without creating them. Set `apiServiceAccount.create` and/or `workerServiceAccount.create` to `true` only when Helm owns the corresponding account, and set each `.name` and `.annotations` independently if needed.
+
+For existing Helm releases, the former shared `serviceAccount.*` values no longer control the API and worker identities. Migrate custom values to `apiServiceAccount.*` and `workerServiceAccount.*`, create the new accounts and associations, and then upgrade the release. The Pod Identity associations and account names must match in the `retailstore` namespace.
+
+### Database Secrets
+
+Database Secret creation and consumption are independent. For Cart, Orders, and Checkout, `database.secret.create` controls whether Helm creates the Secret; both API and worker Deployments always reference `database.secret.name`. An empty name defaults to `<fullname>-db`. For Recommendations, use `app.persistence.secret`; the Secret is created/referenced only when `app.persistence.provider` is `mysql`. Catalog already references `app.persistence.secret.name` when MySQL or search is enabled, regardless of `create`.
+
+| Chart | Default Secret name | Required database keys in the Secret | Database username configuration |
+|---|---|---|---|
+| Cart | `cart-db` | `DB_PASSWORD` | `database.user` |
+| Orders | `orders-db` | `DB_PASSWORD` | `database.user` |
+| Checkout | `checkout-db` | `DB_PASSWORD` | `database.user` |
+| Catalog | `catalog-db` | `RETAIL_CATALOG_PERSISTENCE_USER`, `RETAIL_CATALOG_PERSISTENCE_PASSWORD` | In the Secret |
+| Recommendations | `recommendations-db` | `RETAIL_RECOMMENDATIONS_PERSISTENCE_PASSWORD` | `app.persistence.user` |
+
+If Catalog search is enabled, the same Secret must also contain `RETAIL_CATALOG_SEARCH_OS_USERNAME` and `RETAIL_CATALOG_SEARCH_OS_PASSWORD`.
+
+To use an existing Secret for Cart, put the following in the environment values for that chart:
+
+```yaml
+database:
+  secret:
+    create: false
+    name: cart-db-external
+```
+
+For Catalog and Recommendations, configure the same `create` and `name` fields under `app.persistence.secret`. When using the application umbrella chart, nest each service's values under its alias (for example `cart.database.secret`). Recommendations is deployed separately from that umbrella chart.
+
+Create each Secret in the release namespace before deploying. For example, from a local env file containing the key `DB_PASSWORD`:
+
+```bash
+kubectl create secret generic cart-db-external \
+  --namespace retailstore \
+  --from-env-file=/secure/local/cart-db.env
+```
+
+Keep real credential files outside version control. In existing-Secret mode, password values in the chart are not used to create database Secrets. If the referenced Secret is absent, Kubernetes cannot start the container; Helm rendering does not check that the Secret exists or that its credentials work.
+
+When moving an existing release from a Helm-created Secret to an externally managed one, first provision a **different Secret name** and update the release to reference it with `create: false`. Simply disabling creation of the old Helm-owned Secret can remove it during upgrade. Secret values injected as environment variables are read when containers start; restart the affected workloads after changing credentials.
+
+Run the local chart checks with:
+
+```bash
+helm lint src/cart/chart src/orders/chart src/checkout/chart src/catalog/chart src/recommendations/chart
+python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
 ## Security
 
 See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
