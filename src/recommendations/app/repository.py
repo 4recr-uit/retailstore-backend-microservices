@@ -85,6 +85,9 @@ class BaseRecommendationRepository(Protocol):
 
 
 class InMemoryRecommendationRepository:
+    def check_ready(self) -> None:
+        pass
+
     def __init__(self, config: dict[str, Any], products: list[dict[str, Any]] | None = None) -> None:
         self.config = config
         self.provider = "in-memory"
@@ -112,6 +115,12 @@ class InMemoryRecommendationRepository:
 
 
 class MySQLRecommendationRepository:
+    def check_ready(self) -> None:
+        # Verify connectivity, schema and runtime SELECT permissions without fetching data.
+        with self.engine.connect() as conn:
+            conn.execute(text("SELECT id FROM products LIMIT 0"))
+            conn.execute(text("SELECT product_id, tag_name FROM product_tags LIMIT 0"))
+
     def __init__(self, config: dict[str, Any], engine: Engine | None = None) -> None:
         self.config = config
         self.provider = "mysql"
@@ -192,3 +201,6 @@ class RecommendationsRepository:
 
     def get_recommendations(self, product_id: str) -> list[Recommendation] | None:
         return self._impl.get_recommendations(product_id)
+
+    def check_ready(self) -> None:
+        self._impl.check_ready()

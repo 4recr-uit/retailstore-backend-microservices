@@ -17,6 +17,16 @@
 
 This is a sample application designed to illustrate various concepts related to containers on AWS. It presents a sample retail store application including a product catalog, shopping cart and checkout.
 
+### Worker reliability and readiness
+
+Cart, Orders and Checkout acknowledge SQS batch entries individually. Retryable failed entries are retried at most three application attempts, preserving entry/job IDs; successful entries and sender-fault entries are not resent. If a batch remains incomplete, `/jobs` returns HTTP 502 with the confirmed `jobIds`, `failedJobIds`, and confirmed count (`count` for Cart/Orders, `enqueued` for Checkout). Publication metrics count confirmed entries only. A transport failure can leave delivery uncertain; clients must not blindly resubmit the whole request as new jobs.
+
+Checkout receives no more messages than its processing capacity and waits for the current batch before polling again. Shutdown stops polling and drains active work before closing the executor. Cart and Checkout retain malformed/invalid messages without acknowledging them, allowing the queue's retry/DLQ policy to apply; fallback job IDs use stable SQS message IDs. Orders waits for worker completion before exiting, with `WORKER_SHUTDOWN_TIMEOUT_SECONDS` (default 60 seconds) as the drain limit. Kubernetes termination grace must cover drain and HTTP shutdown; messages not acknowledged before termination can be delivered again.
+
+Catalog fails initialization when migration or seeding fails, and rolls back failed seed transactions. Catalog and Recommendations expose `/ready` for database readiness; their charts use it for readiness probes. Recommendations checks that the catalog tables it reads exist and are accessible. `/health` continues to check process health. Deploy rebuilt service images together with the updated charts so `/ready` is available.
+
+Run `go test ./...` within each Go service (`src/cart`, `src/orders`, `src/catalog`), and `python -m unittest discover -v` within each Python service (`src/checkout`, `src/recommendations`). Chart regression tests are in the repository-level `tests/` directory. These tests use mocks/in-memory databases; AWS IAM, RDS TLS and live scaling still require environment-level verification.
+
 It provides:
 
 - A demo store-front application with themes, pages to show container and application topology information, generative AI chat bot and utility functions for experimentation and demos.

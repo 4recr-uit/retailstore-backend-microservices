@@ -410,14 +410,21 @@ func registerJobProducerRoutes(r *gin.Engine, sqsClient worker.SQSAPI, cfg AppCo
 				}
 			}
 
-			_, err := sqsClient.SendMessageBatch(c.Request.Context(), &sqs.SendMessageBatchInput{
-				QueueUrl: aws.String(cfg.QueueURL),
-				Entries:  entries,
-			})
+			accepted, err := worker.PublishBatch(c.Request.Context(), sqsClient, cfg.QueueURL, entries)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to send batch: %v", err)})
+				successfulJobs, failedJobs := make([]string, 0), make([]string, 0)
+				for i, id := range jobIDs {
+					if accepted[fmt.Sprintf("msg-%d", i)] {
+						successfulJobs = append(successfulJobs, id)
+					} else {
+						failedJobs = append(failedJobs, id)
+					}
+				}
+				m.SQSMessagesPublished.WithLabelValues(cfg.Service, cfg.QueueName).Add(float64(len(successfulJobs)))
+				c.JSON(http.StatusBadGateway, gin.H{"status": "partial_failure", "count": len(successfulJobs), "jobIds": successfulJobs, "failedJobIds": failedJobs})
 				return
 			}
+
 		}
 
 		m.SQSMessagesPublished.WithLabelValues(cfg.Service, cfg.QueueName).Add(float64(req.BatchSize))

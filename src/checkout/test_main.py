@@ -29,6 +29,7 @@ class TestCheckoutAPI(unittest.TestCase):
     def setUp(self):
         self.repo = InMemoryCheckoutRepository()
         self.mock_sqs_client = MagicMock()
+        self.mock_sqs_client.send_message_batch.side_effect = lambda **kw: {"Successful": [{"Id": e["Id"]} for e in kw["Entries"]], "Failed": []}
         self.sqs = SQSService(
             queue_url="http://localhost:4566/000000000000/checkout-queue",
             client=self.mock_sqs_client,

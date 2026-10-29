@@ -11,6 +11,7 @@ import (
 	drivermysql "github.com/go-sql-driver/mysql"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/plugin/opentelemetry/tracing"
 )
 
@@ -105,65 +106,82 @@ func NewRepository(config config.DatabaseConfiguration) (CatalogRepository, erro
 	}
 
 	if err := db.Use(tracing.NewPlugin(tracing.WithoutMetrics())); err != nil {
-		panic(err)
+		return nil, fmt.Errorf("initialize database tracing: %w", err)
 	}
+	if err := initializeData(db); err != nil {
+		if sqlDB, closeErr := db.DB(); closeErr == nil {
+			_ = sqlDB.Close()
+		}
+		return nil, err
+	}
+	return &Database{DB: db}, nil
+}
 
-	fmt.Println("Running database migration...")
-
-	// Migrate the schema
-	db.AutoMigrate(&model.Product{})
-
-	fmt.Println("Database migration complete")
-
+func initializeData(db *gorm.DB) error {
+	if err := db.AutoMigrate(&model.Product{}); err != nil {
+		return fmt.Errorf("migrate catalog schema: %w", err)
+	}
 	products, err := LoadProductData()
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return nil, err
+		return err
 	}
 
 	tags, err := LoadProductTagData()
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return nil, err
+		return err
 	}
 
-	tagMap := make(map[string]model.Tag)
+	return db.Transaction(func(db *gorm.DB) error {
+		tagMap := make(map[string]model.Tag)
 
-	for _, tag := range tags {
-		tagEntity := model.Tag{Name: tag.Name, DisplayName: tag.DisplayName}
-		db.Save(tagEntity)
+		for _, tag := range tags {
+			tagEntity := model.Tag{Name: tag.Name, DisplayName: tag.DisplayName}
+			if err := db.Save(&tagEntity).Error; err != nil {
+				return fmt.Errorf("seed catalog tag: %w", err)
+			}
 
-		tagMap[tag.Name] = tagEntity
-	}
-
-	for _, product := range products {
-		var result model.Product
-		r := db.
-			Where("id = ?", product.ID).
-			Limit(1).
-			Find(&result)
-
-		if r.RowsAffected > 0 {
-			continue
+			tagMap[tag.Name] = tagEntity
 		}
 
-		productTags := []model.Tag{}
-		for _, tag := range product.Tags {
-			productTags = append(productTags, tagMap[tag])
+		for _, product := range products {
+			var result model.Product
+			r := db.
+				Where("id = ?", product.ID).
+				Limit(1).
+				Find(&result)
+			if r.Error != nil {
+				return fmt.Errorf("look up catalog seed product: %w", r.Error)
+			}
+
+			if r.RowsAffected > 0 {
+				continue
+			}
+
+			productTags := []model.Tag{}
+			for _, tag := range product.Tags {
+				productTags = append(productTags, tagMap[tag])
+			}
+
+			if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.Product{
+				ID:          product.ID,
+				Name:        product.Name,
+				Description: product.Description,
+				Price:       product.Price,
+				Tags:        productTags,
+			}).Error; err != nil {
+				return fmt.Errorf("seed catalog product: %w", err)
+			}
 		}
+		return nil
+	})
+}
 
-		db.Create(&model.Product{
-			ID:          product.ID,
-			Name:        product.Name,
-			Description: product.Description,
-			Price:       product.Price,
-			Tags:        productTags,
-		})
+func (db *Database) Ping(ctx context.Context) error {
+	sqlDB, err := db.DB.DB()
+	if err != nil {
+		return err
 	}
-
-	return &Database{
-		DB: db,
-	}, nil
+	return sqlDB.PingContext(ctx)
 }
 
 func (db *Database) GetProducts(tags []string, order string, pageNum, pageSize int, ctx context.Context) ([]model.Product, error) {

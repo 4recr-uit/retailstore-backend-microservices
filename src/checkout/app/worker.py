@@ -10,7 +10,6 @@ import string
 import threading
 import time
 from typing import Any, Optional
-import uuid
 
 import boto3
 from botocore.config import Config
@@ -28,6 +27,13 @@ from app.metrics import (
 from app.repository import BaseCheckoutRepository
 
 logger = logging.getLogger("checkout")
+
+
+class BatchPublishError(RuntimeError):
+    def __init__(self, successful_job_ids: list[str], failed_job_ids: list[str]) -> None:
+        super().__init__("SQS did not acknowledge every batch entry")
+        self.successful_job_ids = successful_job_ids
+        self.failed_job_ids = failed_job_ids
 
 
 def make_id(length: int) -> str:
@@ -84,13 +90,26 @@ class SQSService:
             }
             for idx, msg in enumerate(messages)
         ]
-        self.client.send_message_batch(
-            QueueUrl=self.queue_url,
-            Entries=entries,
-        )
-        count = len(messages)
-        SQS_MESSAGES_PUBLISHED_TOTAL.labels(service="checkout", queue=self.queue_name).inc(count)
-        return count
+        pending, accepted = entries, set()
+        for attempt in range(3):
+            if not pending:
+                break
+            if attempt:
+                time.sleep(0.05 * attempt)
+            try:
+                response = self.client.send_message_batch(QueueUrl=self.queue_url, Entries=pending)
+            except Exception:
+                # Preserve known acknowledgements if a subsequent request fails.
+                break
+            accepted.update(item["Id"] for item in response.get("Successful", []))
+            permanent = {item["Id"] for item in response.get("Failed", []) if item.get("SenderFault")}
+            pending = [entry for entry in pending if entry["Id"] not in accepted | permanent]
+        successful = [msg["jobId"] for i, msg in enumerate(messages) if str(i) in accepted]
+        failed = [msg["jobId"] for i, msg in enumerate(messages) if str(i) not in accepted]
+        SQS_MESSAGES_PUBLISHED_TOTAL.labels(service="checkout", queue=self.queue_name).inc(len(successful))
+        if failed:
+            raise BatchPublishError(successful, failed)
+        return len(successful)
 
     def receive_messages(self, max_messages: int = 1, wait_time_seconds: int = 20) -> list[dict[str, Any]]:
         if not self.queue_url or not self.client:
@@ -145,7 +164,9 @@ def create_sqs_service() -> SQSService:
         return SQSService(queue_url="", client=None)
 
     try:
-        cfg = Config(max_pool_connections=settings.sqs_max_pool_connections)
+        cfg = Config(max_pool_connections=settings.sqs_max_pool_connections,
+                     connect_timeout=5, read_timeout=max(10, settings.sqs_wait_time_seconds + 5),
+                     retries={"mode": "standard", "total_max_attempts": 2})
         client = boto3.client("sqs", endpoint_url=endpoint_url, region_name=region, config=cfg)
         return SQSService(queue_url=queue_url, client=client)
     except Exception as exc:
@@ -192,10 +213,11 @@ class CheckoutWorker:
     def stop(self) -> None:
         logger.info("Stopping checkout worker gracefully...")
         self.shutdown_event.set()
+        if self.worker_thread and self.worker_thread.is_alive():
+            # The polling owner must exit before its executor can be closed.
+            self.worker_thread.join()
         if self.executor:
             self.executor.shutdown(wait=True, cancel_futures=False)
-        if self.worker_thread and self.worker_thread.is_alive():
-            self.worker_thread.join(timeout=get_settings().worker_shutdown_timeout)
         logger.info("Checkout worker stopped.")
 
     def process_message(self, message: dict[str, Any]) -> None:
@@ -203,16 +225,28 @@ class CheckoutWorker:
         started_at_ms = int(time.time() * 1000)
 
         try:
-            body = json.loads(message.get("Body", "{}"))
-        except Exception:
-            body = {}
-
-        job_id = body.get("jobId") or str(uuid.uuid4())
+            body = json.loads(message.get("Body", ""))
+            if not isinstance(body, dict):
+                raise ValueError("Job must be an object")
+            job_id = body.get("jobId") or message.get("MessageId")
+            if not isinstance(job_id, str) or not job_id:
+                raise ValueError("Job must have a stable ID")
+            work_units = body.get("workUnits", 10)
+            enqueued_at = body.get("enqueuedAt", started_at_ms)
+            db_mode = body.get("dbMode", self.default_db_mode)
+            if type(work_units) is not int or not 0 <= work_units <= 10000:
+                raise ValueError("Invalid workUnits")
+            if type(enqueued_at) is not int or enqueued_at < 0:
+                raise ValueError("Invalid enqueuedAt")
+            if db_mode not in ("none", "light", "full"):
+                raise ValueError("Invalid dbMode")
+        except (TypeError, ValueError):
+            WORKER_TASKS_PROCESSED_TOTAL.labels(
+                service="checkout", queue=self.sqs_service.queue_name, status="error").inc()
+            logger.warning("Invalid job; retaining message for retry/DLQ")
+            return
         order_id = body.get("orderId") or job_id
         customer_id = body.get("customerId")
-        enqueued_at = int(body.get("enqueuedAt", started_at_ms))
-        work_units = int(body.get("workUnits", 10))
-        db_mode = str(body.get("dbMode", self.default_db_mode)).lower()
         payload = body.get("payload")
 
         with self._first_job_lock:
@@ -312,25 +346,31 @@ class CheckoutWorker:
             ).dec()
 
     def _process_batch(self, messages: list[dict[str, Any]]) -> None:
-        for msg in messages:
-            if self.shutdown_event.is_set():
-                # Graceful shutdown: immediately release unstarted messages back to queue
-                receipt = msg.get("ReceiptHandle")
-                if receipt:
-                    self.sqs_service.reset_visibility(receipt, 0)
-                continue
-
-            if self.executor:
-                self.executor.submit(self.process_message, msg)
-            else:
-                self.process_message(msg)
+        # At most concurrency tasks may be admitted; finish a wave before polling again.
+        for start in range(0, len(messages), self.concurrency):
+            futures = []
+            for msg in messages[start:start + self.concurrency]:
+                if self.shutdown_event.is_set():
+                    receipt = msg.get("ReceiptHandle")
+                    if receipt:
+                        self.sqs_service.reset_visibility(receipt, 0)
+                    continue
+                if self.executor:
+                    futures.append(self.executor.submit(self.process_message, msg))
+                else:
+                    self.process_message(msg)
+            for future in futures:
+                try:
+                    future.result()
+                except Exception:
+                    logger.exception("Unexpected worker failure; message remains unacknowledged")
 
     def _poll_once(self) -> None:
         if not self.sqs_service.queue_url or not self.sqs_service.client:
             return
 
         messages = self.sqs_service.receive_messages(
-            max_messages=self.max_messages,
+            max_messages=min(self.max_messages, self.concurrency),
             wait_time_seconds=self.wait_time_seconds,
         )
         if messages:

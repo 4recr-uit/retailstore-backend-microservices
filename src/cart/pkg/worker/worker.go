@@ -7,6 +7,7 @@ import (
 	appconfig "github.com/aws-containers/retail-store-sample-app/cart/pkg/config"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -214,17 +215,26 @@ func (w *Worker) processMessage(msg sqstypes.Message) {
 	startedAt := time.Now()
 	var job model.JobMessage
 
-	if msg.Body != nil {
-		if err := json.Unmarshal([]byte(*msg.Body), &job); err != nil {
-			log.Printf("[Worker] Error unmarshalling message: %v", err)
-		}
+	if msg.Body == nil || json.Unmarshal([]byte(*msg.Body), &job) != nil || !strings.HasPrefix(strings.TrimSpace(*msg.Body), "{") {
+		w.metrics.TasksProcessed.WithLabelValues(w.cfg.Service, w.cfg.QueueName, "error").Inc()
+		log.Print("[Worker] Invalid job JSON; retaining message for retry/DLQ")
+		return
+	}
+	mode := job.DBMode
+	if mode == "" {
+		mode = w.cfg.DBMode
+	}
+	if job.WorkUnits < 0 || job.WorkUnits > 10000 || (mode != "none" && mode != "light" && mode != "full") {
+		w.metrics.TasksProcessed.WithLabelValues(w.cfg.Service, w.cfg.QueueName, "error").Inc()
+		return
 	}
 
 	if job.JobID == "" {
 		if msg.MessageId != nil {
 			job.JobID = *msg.MessageId
 		} else {
-			job.JobID = fmt.Sprintf("fallback-%d", time.Now().UnixNano())
+			log.Print("[Worker] Job has no stable ID; retaining message")
+			return
 		}
 	}
 

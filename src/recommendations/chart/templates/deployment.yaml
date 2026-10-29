@@ -48,8 +48,9 @@ spec:
               protocol: TCP
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: 8080
+            timeoutSeconds: 5
             initialDelaySeconds: 3
             periodSeconds: 5
           livenessProbe:

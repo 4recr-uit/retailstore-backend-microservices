@@ -171,3 +171,16 @@ func TestWorkerUnstartedMessagesVisibility(t *testing.T) {
 	assert.Contains(t, mock.visibilityResets, "h-2")
 	mock.mu.Unlock()
 }
+
+func TestInvalidJobsRetainMessages(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := metrics.NewMetrics(reg)
+	mock := &mockSQS{}
+	w := NewWorker(mock, store.NewMemoryStore(), Config{DBMode: "light"}, m)
+	for _, body := range []string{"not-json", " null ", "[]", `{"jobId":"x","workUnits":-1}`, `{"jobId":"x","dbMode":"invalid"}`} {
+		w.processMessage(sqstypes.Message{MessageId: aws.String("stable"), Body: aws.String(body), ReceiptHandle: aws.String("r")})
+	}
+	if len(mock.deletedHandles) != 0 {
+		t.Fatal("invalid message was acknowledged")
+	}
+}

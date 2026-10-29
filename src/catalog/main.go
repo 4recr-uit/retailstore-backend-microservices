@@ -144,6 +144,16 @@ func main() {
 	catalog.GET("/search", c.SearchProducts)
 	catalog.POST("/reindex", c.ReindexProducts)
 
+	r.GET("/ready", func(c *gin.Context) {
+		checker, ok := db.(interface{ Ping(context.Context) error })
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		if !ok || !chaosController.IsHealthy() || checker.Ping(ctx) != nil {
+			c.String(http.StatusServiceUnavailable, "Not ready")
+			return
+		}
+		c.String(http.StatusOK, "OK")
+	})
 	r.GET("/health", func(c *gin.Context) {
 		if !chaosController.IsHealthy() {
 			c.AbortWithError(503, fmt.Errorf("health check failed"))

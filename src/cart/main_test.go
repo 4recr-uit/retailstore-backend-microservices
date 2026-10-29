@@ -15,15 +15,17 @@ import (
 	"github.com/aws-containers/retail-store-sample-app/cart/pkg/model"
 	"github.com/aws-containers/retail-store-sample-app/cart/pkg/store"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type mockSQSClient struct {
-	mu           sync.Mutex
-	sentMessages []*sqs.SendMessageInput
-	sentBatches  []*sqs.SendMessageBatchInput
+	batchResponse *sqs.SendMessageBatchOutput
+	mu            sync.Mutex
+	sentMessages  []*sqs.SendMessageInput
+	sentBatches   []*sqs.SendMessageBatchInput
 }
 
 func (m *mockSQSClient) SendMessage(ctx context.Context, params *sqs.SendMessageInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageOutput, error) {
@@ -37,7 +39,14 @@ func (m *mockSQSClient) SendMessageBatch(ctx context.Context, params *sqs.SendMe
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sentBatches = append(m.sentBatches, params)
-	return &sqs.SendMessageBatchOutput{}, nil
+	if m.batchResponse != nil {
+		return m.batchResponse, nil
+	}
+	out := &sqs.SendMessageBatchOutput{}
+	for _, entry := range params.Entries {
+		out.Successful = append(out.Successful, sqstypes.SendMessageBatchResultEntry{Id: entry.Id})
+	}
+	return out, nil
 }
 
 func (m *mockSQSClient) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error) {
@@ -631,3 +640,23 @@ func TestInitStore(t *testing.T) {
 		assert.IsType(t, &store.MemoryStore{}, st)
 	})
 }
+
+func TestBatchAPIReportsConfirmedAndFailedJobs(t *testing.T) {
+	_, client, router, _ := setupTestApp()
+	client.batchResponse = &sqs.SendMessageBatchOutput{Successful: []sqstypes.SendMessageBatchResultEntry{{Id: ptr("msg-0")}}, Failed: []sqstypes.BatchResultErrorEntry{{Id: ptr("msg-1"), SenderFault: true}}}
+	req := httptest.NewRequest("POST", "/jobs", bytes.NewBufferString(`{"batchSize":2,"workUnits":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, 502, w.Code)
+	var out struct {
+		Count  int      `json:"count"`
+		JobIDs []string `json:"jobIds"`
+		Failed []string `json:"failedJobIds"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Equal(t, 1, out.Count)
+	require.Len(t, out.JobIDs, 1)
+	require.Len(t, out.Failed, 1)
+}
+func ptr(s string) *string { return &s }

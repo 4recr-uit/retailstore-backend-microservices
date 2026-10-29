@@ -59,9 +59,12 @@ func main() {
 
 	// 5. Worker execution if in worker or all mode
 	var wrk *worker.Worker
+	var workerDone chan struct{}
 	if cfg.AppMode == "worker" || cfg.AppMode == "all" {
 		wrk = worker.NewWorker(cfg, repo, sqsClient)
+		workerDone = make(chan struct{})
 		go func() {
+			defer close(workerDone)
 			wrk.Start(ctx)
 		}()
 	}
@@ -73,6 +76,9 @@ func main() {
 	// Stop worker if running
 	if wrk != nil {
 		wrk.Stop()
+		if !waitForWorker(workerDone, config.EnvSeconds("WORKER_SHUTDOWN_TIMEOUT_SECONDS", 60)) {
+			log.Print("Worker drain timed out; unacknowledged messages will be retried by SQS")
+		}
 	}
 
 	// Shutdown HTTP Server
