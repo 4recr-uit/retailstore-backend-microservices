@@ -38,7 +38,7 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "recommendations.configMapName" . }}
-            {{- if .Values.app.persistence.secret.create }}
+            {{- if eq .Values.app.persistence.provider "mysql" }}
             - secretRef:
                 name: {{ include "recommendations.secretName" . }}
             {{- end }}
@@ -48,8 +48,9 @@ spec:
               protocol: TCP
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: 8080
+            timeoutSeconds: 5
             initialDelaySeconds: 3
             periodSeconds: 5
           livenessProbe:

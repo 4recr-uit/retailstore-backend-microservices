@@ -5,6 +5,14 @@ import os
 from typing import Any
 
 
+def env_int(name: str, default: int, minimum: int = 0) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+        return value if value >= minimum else default
+    except ValueError:
+        return default
+
+
 def get_persistence_config() -> dict[str, Any]:
     provider_env = (
         os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_PROVIDER")
@@ -28,7 +36,7 @@ def get_persistence_config() -> dict[str, Any]:
         provider = "in-memory"
 
     if provider == "mysql" and not endpoint:
-        endpoint = "localhost:3306"
+        raise ValueError("MySQL requires RETAIL_RECOMMENDATIONS_PERSISTENCE_ENDPOINT or DB_HOST")
 
     db_name = (
         os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_DB_NAME")
@@ -60,6 +68,12 @@ def get_persistence_config() -> dict[str, Any]:
         "db_user": db_user,
         "db_password": db_password,
         "connect_timeout": connect_timeout,
+        "pool_size": env_int("DB_POOL_SIZE", 3, 1),
+        "max_overflow": env_int("DB_MAX_OVERFLOW", 2),
+        "pool_recycle": env_int("DB_POOL_RECYCLE_SECONDS", 1800, 1),
+        "pool_timeout": env_int("DB_POOL_TIMEOUT_SECONDS", 30, 1),
+        "tls": os.getenv("RETAIL_RECOMMENDATIONS_PERSISTENCE_TLS", "false").lower() == "true",
+        "ssl_ca": os.getenv("DB_SSL_CA", ""),
     }
 
 

@@ -29,6 +29,7 @@ class TestCheckoutAPI(unittest.TestCase):
     def setUp(self):
         self.repo = InMemoryCheckoutRepository()
         self.mock_sqs_client = MagicMock()
+        self.mock_sqs_client.send_message_batch.side_effect = lambda **kw: {"Successful": [{"Id": e["Id"]} for e in kw["Entries"]], "Failed": []}
         self.sqs = SQSService(
             queue_url="http://localhost:4566/000000000000/checkout-queue",
             client=self.mock_sqs_client,
@@ -558,13 +559,13 @@ class TestPostgresRepositorySchema(unittest.TestCase):
                 called_url = mock_ce.call_args[0][0]
                 self.assertEqual(called_url, "postgresql://user:pass@host:5432/db")
 
-    def test_create_repository_fallback_on_exception(self):
+    def test_create_repository_fails_instead_of_discarding_persistence(self):
         env = {"DATABASE_URL": "postgres://user:pass@host:5432/db"}
         # Case 1: create_engine raises exception
         with patch.dict(os.environ, env, clear=True):
             with patch("app.repository.create_engine", side_effect=Exception("Connection refused")):
-                repo = create_repository()
-                self.assertIsInstance(repo, InMemoryCheckoutRepository)
+                with self.assertRaisesRegex(RuntimeError, "PostgreSQL initialization failed"):
+                    create_repository()
 
         # Case 2: _init_db raises exception
         with patch.dict(os.environ, env, clear=True):
@@ -572,8 +573,8 @@ class TestPostgresRepositorySchema(unittest.TestCase):
                 mock_engine = MagicMock()
                 mock_engine.begin.side_effect = Exception("Migration failed")
                 mock_ce.return_value = mock_engine
-                repo = create_repository()
-                self.assertIsInstance(repo, InMemoryCheckoutRepository)
+                with self.assertRaisesRegex(RuntimeError, "PostgreSQL initialization failed"):
+                    create_repository()
 
 
 class TestConfigSettings(unittest.TestCase):

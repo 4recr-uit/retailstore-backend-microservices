@@ -27,7 +27,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "carts.serviceAccountName" . }}
+      serviceAccountName: {{ include "carts.apiServiceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
@@ -42,10 +42,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "carts.configMapName" . }}
-            {{- if .Values.database.secret.create }}
             - secretRef:
                 name: {{ include "carts.secretName" . }}
-            {{- end }}
           ports:
             - name: http
               containerPort: 8080

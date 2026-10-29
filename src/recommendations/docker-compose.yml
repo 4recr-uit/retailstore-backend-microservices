@@ -1,0 +1,29 @@
+include:
+  - ../catalog/docker-compose.yml
+
+services:
+  recommendations:
+    build:
+      context: .
+    hostname: recommendations
+    restart: always
+    cap_drop:
+      - all
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - RETAIL_RECOMMENDATIONS_PERSISTENCE_PROVIDER=${RETAIL_RECOMMENDATIONS_PERSISTENCE_PROVIDER:-mysql}
+      - RETAIL_RECOMMENDATIONS_PERSISTENCE_ENDPOINT=${RECOMMENDATIONS_DB_ENDPOINT:-${CATALOG_DB_ENDPOINT:-catalog-db:3306}}
+      - RETAIL_RECOMMENDATIONS_PERSISTENCE_DB_NAME=${RECOMMENDATIONS_DB_NAME:-${MYSQL_DATABASE:-catalogdb}}
+      - RETAIL_RECOMMENDATIONS_PERSISTENCE_USER=${RECOMMENDATIONS_DB_USER:-${MYSQL_USER:-catalog_user}}
+      - RETAIL_RECOMMENDATIONS_PERSISTENCE_PASSWORD=${RECOMMENDATIONS_DB_PASSWORD:-${MYSQL_PASSWORD:-${DB_PASSWORD:-test123}}}
+    ports:
+      - "${RECOMMENDATIONS_PORT:-8080}:8080"
+    depends_on:
+      catalog:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 3

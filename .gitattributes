@@ -1,0 +1,2 @@
+# Maven's Unix wrapper must keep its Linux shebang valid on Windows checkouts.
+**/mvnw text eol=lf

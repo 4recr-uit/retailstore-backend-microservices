@@ -63,7 +63,11 @@ app:
     user: "catalog_user"
     connectTimeout: 5
     secret:
+      # MySQL only. Controls creation, not whether the Deployment references it.
+      # With create=false, create the Secret in the release namespace with key
+      # RETAIL_RECOMMENDATIONS_PERSISTENCE_PASSWORD; the user comes from persistence.user.
       create: true
+      # If empty, defaults to <fullname>-db.
       name: recommendations-db
       password: "default_password"
 

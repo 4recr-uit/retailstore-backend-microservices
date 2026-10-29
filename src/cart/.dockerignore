@@ -6,3 +6,7 @@ chart
 scripts
 target
 .idea
+
+# Runtime configuration is supplied when the container starts.
+.env
+.env.*

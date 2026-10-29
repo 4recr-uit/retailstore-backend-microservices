@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -15,13 +17,13 @@ import (
 	"time"
 
 	"github.com/aws-containers/retail-store-sample-app/cart/pkg/chaos"
+	appconfig "github.com/aws-containers/retail-store-sample-app/cart/pkg/config"
 	"github.com/aws-containers/retail-store-sample-app/cart/pkg/metrics"
 	"github.com/aws-containers/retail-store-sample-app/cart/pkg/model"
 	"github.com/aws-containers/retail-store-sample-app/cart/pkg/store"
 	"github.com/aws-containers/retail-store-sample-app/cart/pkg/worker"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/gin-gonic/gin"
@@ -62,9 +64,6 @@ func loadConfig() AppConfig {
 		qName = "cart-queue"
 	}
 	qURL := os.Getenv("SQS_QUEUE_URL")
-	if qURL == "" {
-		qURL = "http://localhost:4566/000000000000/cart-queue"
-	}
 	maxMsgs := int32(1)
 	if v := os.Getenv("SQS_MAX_MESSAGES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 10 {
@@ -83,7 +82,7 @@ func loadConfig() AppConfig {
 	}
 	awsRegion := os.Getenv("AWS_REGION")
 	if awsRegion == "" {
-		awsRegion = "us-east-1"
+		awsRegion = os.Getenv("AWS_DEFAULT_REGION")
 	}
 	endpointURL := os.Getenv("AWS_ENDPOINT_URL")
 	if endpointURL == "" {
@@ -115,31 +114,25 @@ func InitStore() (store.Store, error) {
 		if dbURL != "" {
 			connStr = dbURL
 		} else {
-			if dbHost == "" {
-				dbHost = "localhost"
+			dbUser, dbPass, dbName := os.Getenv("DB_USER"), os.Getenv("DB_PASSWORD"), os.Getenv("DB_NAME")
+			if dbHost == "" || dbUser == "" || dbPass == "" || dbName == "" {
+				return nil, fmt.Errorf("PostgreSQL requires DB_HOST, DB_NAME, DB_USER and DB_PASSWORD or DATABASE_URL")
 			}
 			dbPort := os.Getenv("DB_PORT")
 			if dbPort == "" {
 				dbPort = "5432"
 			}
-			dbUser := os.Getenv("DB_USER")
-			if dbUser == "" {
-				dbUser = "postgres"
-			}
-			dbPass := os.Getenv("DB_PASSWORD")
-			if dbPass == "" {
-				dbPass = "postgres"
-			}
-			dbName := os.Getenv("DB_NAME")
-			if dbName == "" {
-				dbName = "retaildb"
-			}
 			dbSSL := os.Getenv("DB_SSLMODE")
 			if dbSSL == "" {
 				dbSSL = "disable"
 			}
-			connStr = fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-				dbHost, dbPort, dbUser, dbPass, dbName, dbSSL)
+			connection := url.URL{Scheme: "postgres", Host: net.JoinHostPort(dbHost, dbPort), Path: "/" + dbName, User: url.UserPassword(dbUser, dbPass)}
+			options := url.Values{"sslmode": {dbSSL}, "connect_timeout": {strconv.Itoa(int(appconfig.EnvSeconds("DB_CONNECT_TIMEOUT_SECONDS", 10) / time.Second))}}
+			if ca := os.Getenv("DB_SSLROOTCERT"); ca != "" {
+				options.Set("sslrootcert", ca)
+			}
+			connection.RawQuery = options.Encode()
+			connStr = connection.String()
 		}
 
 		db, err := sql.Open("postgres", connStr)
@@ -158,11 +151,7 @@ func InitSQSClient(ctx context.Context, region, endpointURL string) (*sqs.Client
 		config.WithRegion(region),
 	}
 
-	if endpointURL != "" {
-		if os.Getenv("AWS_ACCESS_KEY_ID") == "" {
-			optFns = append(optFns, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("test", "test", "")))
-		}
-	}
+	// Use the standard SDK chain: env credentials locally or EKS Pod Identity.
 
 	cfg, err := config.LoadDefaultConfig(ctx, optFns...)
 	if err != nil {
@@ -421,14 +410,21 @@ func registerJobProducerRoutes(r *gin.Engine, sqsClient worker.SQSAPI, cfg AppCo
 				}
 			}
 
-			_, err := sqsClient.SendMessageBatch(c.Request.Context(), &sqs.SendMessageBatchInput{
-				QueueUrl: aws.String(cfg.QueueURL),
-				Entries:  entries,
-			})
+			accepted, err := worker.PublishBatch(c.Request.Context(), sqsClient, cfg.QueueURL, entries)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to send batch: %v", err)})
+				successfulJobs, failedJobs := make([]string, 0), make([]string, 0)
+				for i, id := range jobIDs {
+					if accepted[fmt.Sprintf("msg-%d", i)] {
+						successfulJobs = append(successfulJobs, id)
+					} else {
+						failedJobs = append(failedJobs, id)
+					}
+				}
+				m.SQSMessagesPublished.WithLabelValues(cfg.Service, cfg.QueueName).Add(float64(len(successfulJobs)))
+				c.JSON(http.StatusBadGateway, gin.H{"status": "partial_failure", "count": len(successfulJobs), "jobIds": successfulJobs, "failedJobIds": failedJobs})
 				return
 			}
+
 		}
 
 		m.SQSMessagesPublished.WithLabelValues(cfg.Service, cfg.QueueName).Add(float64(req.BatchSize))
@@ -501,7 +497,7 @@ func main() {
 	}
 
 	// 2. Shutdown HTTP server with 5s timeout
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), appconfig.EnvSeconds("HTTP_SHUTDOWN_TIMEOUT_SECONDS", 5))
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("HTTP server shutdown error: %v", err)

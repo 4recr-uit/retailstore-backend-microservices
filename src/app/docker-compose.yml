@@ -16,7 +16,8 @@
 
 include:
   - ../ui/docker-compose.yml
-  - ../catalog/docker-compose.yml
+  # Recommendations includes Catalog and its database.
+  - ../recommendations/docker-compose.yml
   - ../cart/docker-compose.yml
   - ../checkout/docker-compose.yml
   - ../orders/docker-compose.yml

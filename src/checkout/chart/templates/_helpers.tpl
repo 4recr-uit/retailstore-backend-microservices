@@ -91,15 +91,13 @@ app.kubernetes.io/component: worker
 app.kubernetes.io/owner: retail-store-sample
 {{- end }}
 
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "checkout.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "checkout.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
+{{/* Separate identities for API producers and SQS workers. */}}
+{{- define "checkout.apiServiceAccountName" -}}
+{{- required "apiServiceAccount.name is required" .Values.apiServiceAccount.name -}}
 {{- end }}
+
+{{- define "checkout.workerServiceAccountName" -}}
+{{- required "workerServiceAccount.name is required" .Values.workerServiceAccount.name -}}
 {{- end }}
 
 {{/*
