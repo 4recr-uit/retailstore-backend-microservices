@@ -3,13 +3,14 @@
 # =============================================================================
 # Usage:
 #   cp .env.example .env            # first-time setup (values are ready to use)
+#   docker compose up -d postgres mysql  # provision schema/seed separately before first app start
 #   docker compose up -d            # start all backend services + databases
 #   docker compose up -d --build    # rebuild images before starting
 #   docker compose down             # stop and remove containers (data persisted in volumes)
 #   docker compose down -v          # stop and remove containers AND volumes (clean slate)
 #
 # This file starts:
-#   - 1 PostgreSQL (shared, database: retaildb — schemas created by each service)
+#   - 1 PostgreSQL (shared, database: retaildb — provision schema with database/postgres/setup.sql)
 #   - 1 MySQL 8.0 (shared, database: catalogdb)
 #   - 5 Backend Microservices: catalog, recommendations, cart, orders, checkout
 #
@@ -24,7 +25,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # Infrastructure: Shared PostgreSQL (retaildb)
-  # Schemas per service (auto-migrated on startup):
+  # Schemas per service (provision separately before startup):
   #   cart.carts, cart.cart_items, cart.processed_jobs
   #   orders.orders, orders.order_items, orders.shipping_addresses
   #   checkout.checkout_sessions, checkout.processed_jobs
@@ -78,7 +79,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # Catalog Service — Go (Gin) + MySQL
-  # Manages product catalog. Seeds sample data into MySQL on first start.
+  # Reads product catalog. Provision schema/seed with database/mysql/setup.sql first.
   # ---------------------------------------------------------------------------
   catalog:
     build:
@@ -111,7 +112,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # Recommendations Service — Python (FastAPI) + MySQL (read from catalogdb)
-  # Waits for catalog to be healthy (ensures schema + seed data exists).
+  # Schema and sample data must be provisioned separately before backend startup.
   # ---------------------------------------------------------------------------
   recommendations:
     build:

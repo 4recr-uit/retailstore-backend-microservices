@@ -108,7 +108,13 @@ func NewRepository(config config.DatabaseConfiguration) (CatalogRepository, erro
 	if err := db.Use(tracing.NewPlugin(tracing.WithoutMetrics())); err != nil {
 		return nil, fmt.Errorf("initialize database tracing: %w", err)
 	}
-	if err := initializeData(db); err != nil {
+	timeout := config.ConnectTimeout
+	if timeout <= 0 {
+		timeout = 5
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+	if err := initializeRepository(ctx, db, config.Type); err != nil {
 		if sqlDB, closeErr := db.DB(); closeErr == nil {
 			_ = sqlDB.Close()
 		}
@@ -117,7 +123,33 @@ func NewRepository(config config.DatabaseConfiguration) (CatalogRepository, erro
 	return &Database{DB: db}, nil
 }
 
-func initializeData(db *gorm.DB) error {
+// Persistent databases are provisioned separately; only disposable in-memory
+// storage gets automatic schema creation and sample data.
+func initializeRepository(ctx context.Context, db *gorm.DB, provider string) error {
+	if provider != "mysql" {
+		return initializeInMemoryData(db.WithContext(ctx))
+	}
+	queries := []string{
+		"SELECT id, name, description, price FROM products LIMIT 0",
+		"SELECT name, display_name FROM tags LIMIT 0",
+		"SELECT product_id, tag_name FROM product_tags LIMIT 0",
+	}
+	for _, query := range queries {
+		rows, err := db.WithContext(ctx).Raw(query).Rows()
+		if err != nil {
+			return fmt.Errorf("catalog database schema is not ready; provision tables and SELECT permissions before startup: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func initializeInMemoryData(db *gorm.DB) error {
 	if err := db.AutoMigrate(&model.Product{}); err != nil {
 		return fmt.Errorf("migrate catalog schema: %w", err)
 	}

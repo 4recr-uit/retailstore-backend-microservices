@@ -16,7 +16,7 @@ type PostgresStore struct {
 	db *sql.DB
 }
 
-// NewPostgresStore creates a new PostgresStore and runs initial migrations.
+// NewPostgresStore connects to an existing schema without creating or changing it.
 func NewPostgresStore(db *sql.DB) (*PostgresStore, error) {
 	db.SetMaxOpenConns(appconfig.EnvInt("DB_MAX_OPEN_CONNS", 3))
 	db.SetMaxIdleConns(appconfig.EnvInt("DB_MAX_IDLE_CONNS", 2))
@@ -25,39 +25,31 @@ func NewPostgresStore(db *sql.DB) (*PostgresStore, error) {
 	p := &PostgresStore{db: db}
 	ctx, cancel := context.WithTimeout(context.Background(), appconfig.EnvSeconds("DB_CONNECT_TIMEOUT_SECONDS", 10))
 	defer cancel()
-	if err := p.migrate(ctx); err != nil {
-		return nil, fmt.Errorf("failed to run postgres migrations: %w", err)
+	if err := p.checkSchema(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("cart database schema is not ready: %w", err)
 	}
 
 	return p, nil
 }
 
-func (p *PostgresStore) migrate(ctx context.Context) error {
-	migrations := []string{
-		`CREATE SCHEMA IF NOT EXISTS cart;`,
-		`CREATE TABLE IF NOT EXISTS cart.carts (
-			customer_id VARCHAR(255) PRIMARY KEY,
-			updated_at TIMESTAMPTZ DEFAULT NOW()
-		);`,
-		`CREATE TABLE IF NOT EXISTS cart.cart_items (
-			id SERIAL PRIMARY KEY,
-			customer_id VARCHAR(255) NOT NULL REFERENCES cart.carts(customer_id) ON DELETE CASCADE,
-			item_id VARCHAR(255) NOT NULL,
-			quantity INT NOT NULL,
-			unit_price INT NOT NULL,
-			UNIQUE(customer_id, item_id)
-		);`,
-		`CREATE TABLE IF NOT EXISTS cart.processed_jobs (
-			job_id VARCHAR(64) PRIMARY KEY,
-			customer_id VARCHAR(255),
-			status VARCHAR(64) DEFAULT 'COMPLETED',
-			created_at TIMESTAMPTZ DEFAULT NOW()
-		);`,
+// LIMIT 0 validates required columns and SELECT access without reading user data.
+func (p *PostgresStore) checkSchema(ctx context.Context) error {
+	queries := []string{
+		"SELECT customer_id, updated_at FROM cart.carts LIMIT 0",
+		"SELECT id, customer_id, item_id, quantity, unit_price FROM cart.cart_items LIMIT 0",
+		"SELECT job_id, customer_id, status, created_at FROM cart.processed_jobs LIMIT 0",
 	}
-
-	for _, stmt := range migrations {
-		if _, err := p.db.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("migration statement failed [%s]: %w", stmt, err)
+	for _, query := range queries {
+		rows, err := p.db.QueryContext(ctx, query)
+		if err != nil {
+			return fmt.Errorf("check existing schema (provision it before starting the service): %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if err := rows.Err(); err != nil {
+			return err
 		}
 	}
 	return nil

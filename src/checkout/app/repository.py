@@ -86,28 +86,22 @@ class PostgresCheckoutRepository(BaseCheckoutRepository):
     def __init__(self, engine: Engine) -> None:
         self.provider = "postgres"
         self.engine = engine
-        self._init_db()
-        logger.info("Initialized PostgreSQL checkout repository with schema auto-migration")
+        self.check_ready()
+        logger.info("Initialized PostgreSQL checkout repository using existing tables")
 
-    def _init_db(self) -> None:
-        migration_sql = """
-        CREATE SCHEMA IF NOT EXISTS checkout;
-        CREATE TABLE IF NOT EXISTS checkout.checkout_sessions (
-            customer_id VARCHAR(255) PRIMARY KEY,
-            data JSONB NOT NULL,
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
-        CREATE TABLE IF NOT EXISTS checkout.processed_jobs (
-            job_id VARCHAR(64) PRIMARY KEY,
-            order_id VARCHAR(255) NOT NULL,
-            customer_id VARCHAR(255),
-            status VARCHAR(64) DEFAULT 'COMPLETED',
-            data JSONB,
-            created_at TIMESTAMPTZ DEFAULT NOW()
-        );
-        """
-        with self.engine.begin() as conn:
-            conn.execute(text(migration_sql))
+    def check_ready(self) -> None:
+        queries = (
+            "SELECT customer_id, data, updated_at FROM checkout.checkout_sessions LIMIT 0",
+            "SELECT job_id, order_id, customer_id, status, data, created_at FROM checkout.processed_jobs LIMIT 0",
+        )
+        try:
+            with self.engine.connect() as conn:
+                for query in queries:
+                    conn.execute(text(query)).close()
+        except Exception as exc:
+            raise RuntimeError(
+                "Checkout database schema is not ready; provision tables and runtime permissions before startup"
+            ) from exc
 
     def get_session(self, customer_id: str) -> Optional[dict[str, Any]]:
         stmt = text("SELECT data FROM checkout.checkout_sessions WHERE customer_id = :cid")
@@ -208,6 +202,7 @@ def create_repository() -> BaseCheckoutRepository:
         }
         if not database_url and settings.db_sslrootcert:
             connect_args["sslrootcert"] = settings.db_sslrootcert
+        engine = None
         try:
             engine = create_engine(
                 url,
@@ -219,6 +214,8 @@ def create_repository() -> BaseCheckoutRepository:
             )
             return PostgresCheckoutRepository(engine)
         except Exception as exc:
+            if engine is not None:
+                engine.dispose()
             # Do not print a URL containing credentials or silently discard persistence.
             logger.error("PostgreSQL initialization failed")
             raise RuntimeError("PostgreSQL initialization failed; check database configuration") from exc

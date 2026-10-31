@@ -6,6 +6,8 @@
 
 This service provides an API for retrieving product catalog information. Data is stored in a MySQL database.
 
+MySQL startup only checks existing tables/columns and SELECT permissions; it does not migrate or seed the database. Provision a new database with [database/mysql/setup.sql](../../database/mysql/setup.sql) before starting the service. Catalog can then run using a SELECT-only account. In-memory mode still initializes disposable sample data automatically.
+
 ## Configuration
 
 The following environment variables are available for configuring the service:

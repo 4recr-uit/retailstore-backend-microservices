@@ -15,45 +15,17 @@ type PostgresRepository struct {
 	db *sql.DB
 }
 
-const schemaDDL = `
-CREATE SCHEMA IF NOT EXISTS orders;
-
-CREATE TABLE IF NOT EXISTS orders.orders (
-    id VARCHAR(255) PRIMARY KEY,
-    job_id VARCHAR(64) UNIQUE,
-    customer_id VARCHAR(255),
-    status VARCHAR(64) DEFAULT 'COMPLETED',
-    created_date TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS orders.order_items (
-    id SERIAL PRIMARY KEY,
-    product_id VARCHAR(255) NOT NULL,
-    quantity INT NOT NULL,
-    unit_cost INT NOT NULL,
-    total_cost INT NOT NULL,
-    order_id VARCHAR(255) REFERENCES orders.orders(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS orders.shipping_addresses (
-    order_id VARCHAR(255) PRIMARY KEY REFERENCES orders.orders(id) ON DELETE CASCADE,
-    first_name VARCHAR(255) NOT NULL,
-    last_name VARCHAR(255) NOT NULL,
-    email VARCHAR(255) NOT NULL,
-    address1 VARCHAR(255) NOT NULL,
-    address2 VARCHAR(255),
-    city VARCHAR(255) NOT NULL,
-    zip_code VARCHAR(255) NOT NULL,
-    state_id VARCHAR(255) NOT NULL
-);
-`
-
 func NewPostgresRepository(connStr string) (*PostgresRepository, error) {
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	return initializePostgresRepository(db)
+}
+
+// initializePostgresRepository checks existing tables; startup never executes DDL.
+func initializePostgresRepository(db *sql.DB) (*PostgresRepository, error) {
 	// Strictly set connection limits as specified
 	db.SetMaxOpenConns(appconfig.EnvInt("DB_MAX_OPEN_CONNS", 3))
 	db.SetMaxIdleConns(appconfig.EnvInt("DB_MAX_IDLE_CONNS", 2))
@@ -67,12 +39,35 @@ func NewPostgresRepository(connStr string) (*PostgresRepository, error) {
 		return nil, fmt.Errorf("failed to ping postgres: %w", err)
 	}
 
-	if _, err := db.ExecContext(ctx, schemaDDL); err != nil {
+	repo := &PostgresRepository{db: db}
+	if err := repo.checkSchema(ctx); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("failed to execute schema DDL: %w", err)
+		return nil, fmt.Errorf("orders database schema is not ready: %w", err)
 	}
 
-	return &PostgresRepository{db: db}, nil
+	return repo, nil
+}
+
+// LIMIT 0 checks columns and SELECT permissions without reading order data.
+func (r *PostgresRepository) checkSchema(ctx context.Context) error {
+	queries := []string{
+		"SELECT id, job_id, customer_id, status, created_date FROM orders.orders LIMIT 0",
+		"SELECT id, product_id, quantity, unit_cost, total_cost, order_id FROM orders.order_items LIMIT 0",
+		"SELECT order_id, first_name, last_name, email, address1, address2, city, zip_code, state_id FROM orders.shipping_addresses LIMIT 0",
+	}
+	for _, query := range queries {
+		rows, err := r.db.QueryContext(ctx, query)
+		if err != nil {
+			return fmt.Errorf("check existing schema (provision it before starting the service): %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *PostgresRepository) Close() error {

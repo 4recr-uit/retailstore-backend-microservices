@@ -234,6 +234,52 @@ func TestPostgresRepository_PingAndClose(t *testing.T) {
 	}
 }
 
+func TestPostgresStartupUsesExistingSchema(t *testing.T) {
+	queries := 0
+	conn := &mockConn{
+		queryFn: func(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+			if !strings.HasPrefix(query, "SELECT ") || !strings.HasSuffix(query, " LIMIT 0") {
+				t.Fatalf("startup issued a non-validation query: %s", query)
+			}
+			queries++
+			return newMockRows([]string{"unused"}), nil
+		},
+		execFn: func(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+			t.Fatalf("startup attempted to modify the database: %s", query)
+			return nil, errors.New("writes forbidden")
+		},
+	}
+	repo, cleanup := setupMockRepo(t, conn)
+	defer cleanup()
+	if _, err := initializePostgresRepository(repo.db); err != nil {
+		t.Fatal(err)
+	}
+	if queries != 3 {
+		t.Fatalf("expected checks for three tables, got %d", queries)
+	}
+}
+
+func TestPostgresStartupRejectsInvalidSchemaAndClosesPool(t *testing.T) {
+	for _, message := range []string{"relation does not exist", "column does not exist", "permission denied"} {
+		t.Run(message, func(t *testing.T) {
+			cause := errors.New(message)
+			closed := false
+			conn := &mockConn{
+				queryFn: func(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+					return nil, cause
+				},
+				closeFn: func() error { closed = true; return nil },
+			}
+			repo, cleanup := setupMockRepo(t, conn)
+			defer cleanup()
+			initialized, err := initializePostgresRepository(repo.db)
+			if initialized != nil || !errors.Is(err, cause) || !closed {
+				t.Fatalf("expected schema error and closed pool, got repo=%v err=%v closed=%v", initialized, err, closed)
+			}
+		})
+	}
+}
+
 func TestPostgresRepository_PingError(t *testing.T) {
 	expectedErr := errors.New("db unreachable")
 	conn := &mockConn{
