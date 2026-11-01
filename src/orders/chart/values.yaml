@@ -110,12 +110,8 @@ worker:
     type: ClusterIP
     port: 8080
     targetPort: 8080
-  nodeSelector:
-    karpenter.sh/nodepool: default
-  tolerations:
-    - key: "karpenter.sh/capacity-type"
-      operator: "Exists"
-      effect: "NoSchedule"
+  nodeSelector: {}
+  tolerations: []
   affinity: {}
   podAnnotations:
     prometheus.io/scrape: "true"
