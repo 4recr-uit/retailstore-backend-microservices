@@ -40,6 +40,13 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: {{ "catalog" }}
+          {{- if .Values.databaseTLS.enabled }}
+          env:
+            - name: RETAIL_CATALOG_PERSISTENCE_TLS
+              value: "true"
+            - name: SSL_CERT_FILE
+              value: /etc/rds-ca/global-bundle.pem
+          {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "catalog.configMapName" . }}
@@ -65,10 +72,23 @@ spec:
           volumeMounts:
             - mountPath: /tmp
               name: tmp-volume
+            {{- if .Values.databaseTLS.enabled }}
+            - name: rds-ca
+              mountPath: /etc/rds-ca
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp-volume
           emptyDir:
             medium: Memory
+        {{- if .Values.databaseTLS.enabled }}
+        - name: rds-ca
+          configMap:
+            name: {{ required "databaseTLS.caConfigMapName is required when TLS is enabled" .Values.databaseTLS.caConfigMapName | quote }}
+            items:
+              - key: global-bundle.pem
+                path: global-bundle.pem
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

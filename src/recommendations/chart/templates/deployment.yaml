@@ -35,6 +35,13 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.Version }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.databaseTLS.enabled }}
+          env:
+            - name: RETAIL_RECOMMENDATIONS_PERSISTENCE_TLS
+              value: "true"
+            - name: DB_SSL_CA
+              value: /etc/rds-ca/global-bundle.pem
+          {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "recommendations.configMapName" . }}
@@ -42,6 +49,12 @@ spec:
             - secretRef:
                 name: {{ include "recommendations.secretName" . }}
             {{- end }}
+          {{- if .Values.databaseTLS.enabled }}
+          volumeMounts:
+            - name: rds-ca
+              mountPath: /etc/rds-ca
+              readOnly: true
+          {{- end }}
           ports:
             - name: http
               containerPort: 8080
@@ -61,6 +74,15 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      {{- if .Values.databaseTLS.enabled }}
+      volumes:
+        - name: rds-ca
+          configMap:
+            name: {{ required "databaseTLS.caConfigMapName is required when TLS is enabled" .Values.databaseTLS.caConfigMapName | quote }}
+            items:
+              - key: global-bundle.pem
+                path: global-bundle.pem
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

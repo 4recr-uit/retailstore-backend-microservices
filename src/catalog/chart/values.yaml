@@ -165,3 +165,9 @@ podDisruptionBudget:
   enabled: false
   minAvailable: 2
   maxUnavailable: 1
+
+# Shared RDS CA ConfigMap, provisioned separately in the release namespace.
+# Enabling this verifies server identity using /etc/rds-ca/global-bundle.pem.
+databaseTLS:
+  enabled: false
+  caConfigMapName: rds-ca
