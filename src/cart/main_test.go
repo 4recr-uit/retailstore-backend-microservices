@@ -372,26 +372,15 @@ func TestPostgresStoreWithSqlmock(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	// 1. Initial migrations expectations
-	mock.ExpectExec("CREATE SCHEMA IF NOT EXISTS cart;").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS cart.carts (
-			customer_id VARCHAR(255) PRIMARY KEY,
-			updated_at TIMESTAMPTZ DEFAULT NOW()
-		);`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS cart.cart_items (
-			id SERIAL PRIMARY KEY,
-			customer_id VARCHAR(255) NOT NULL REFERENCES cart.carts(customer_id) ON DELETE CASCADE,
-			item_id VARCHAR(255) NOT NULL,
-			quantity INT NOT NULL,
-			unit_price INT NOT NULL,
-			UNIQUE(customer_id, item_id)
-		);`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS cart.processed_jobs (
-			job_id VARCHAR(64) PRIMARY KEY,
-			customer_id VARCHAR(255),
-			status VARCHAR(64) DEFAULT 'COMPLETED',
-			created_at TIMESTAMPTZ DEFAULT NOW()
-		);`).WillReturnResult(sqlmock.NewResult(0, 0))
+	// Startup validates the provisioned schema using read-only queries.
+	queries := []string{
+		"SELECT customer_id, updated_at FROM cart.carts LIMIT 0",
+		"SELECT id, customer_id, item_id, quantity, unit_price FROM cart.cart_items LIMIT 0",
+		"SELECT job_id, customer_id, status, created_at FROM cart.processed_jobs LIMIT 0",
+	}
+	for _, query := range queries {
+		mock.ExpectQuery(query).WillReturnRows(sqlmock.NewRows([]string{"unused"})).RowsWillBeClosed()
+	}
 
 	pgStore, err := store.NewPostgresStore(db)
 	require.NoError(t, err)

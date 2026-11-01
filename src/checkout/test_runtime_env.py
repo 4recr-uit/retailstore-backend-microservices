@@ -46,6 +46,15 @@ class RuntimeEnvironmentTests(unittest.TestCase):
             self.assertEqual(client.call_args.kwargs["region_name"], "ap-southeast-1")
             self.assertEqual(client.call_args.kwargs["config"].max_pool_connections, 12)
 
+    def test_schema_failure_closes_engine_without_falling_back_to_memory(self):
+        values = {"DATABASE_URL": "postgresql://u:p@pg.internal/retaildb"}
+        with patch.dict(os.environ, values, clear=True), patch("app.repository.create_engine") as factory:
+            engine = factory.return_value
+            engine.connect.side_effect = RuntimeError("permission denied")
+            with self.assertRaisesRegex(RuntimeError, "PostgreSQL initialization failed"):
+                create_repository()
+            engine.dispose.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

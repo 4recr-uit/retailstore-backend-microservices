@@ -37,6 +37,12 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.Version }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- if .Values.databaseTLS.enabled }}
+            - name: DB_SSLMODE
+              value: "verify-full"
+            - name: DB_SSLROOTCERT
+              value: /etc/rds-ca/global-bundle.pem
+            {{- end }}
             - name: APP_MODE
               value: {{ .Values.api.appMode | quote }}
           envFrom:
@@ -44,6 +50,12 @@ spec:
                 name: {{ include "carts.configMapName" . }}
             - secretRef:
                 name: {{ include "carts.secretName" . }}
+          {{- if .Values.databaseTLS.enabled }}
+          volumeMounts:
+            - name: rds-ca
+              mountPath: /etc/rds-ca
+              readOnly: true
+          {{- end }}
           ports:
             - name: http
               containerPort: 8080
@@ -62,6 +74,15 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
+      {{- if .Values.databaseTLS.enabled }}
+      volumes:
+        - name: rds-ca
+          configMap:
+            name: {{ required "databaseTLS.caConfigMapName is required when TLS is enabled" .Values.databaseTLS.caConfigMapName | quote }}
+            items:
+              - key: global-bundle.pem
+                path: global-bundle.pem
+      {{- end }}
       {{- with .Values.api.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -76,3 +76,9 @@ serviceMonitor:
   scrapeInterval: 5s
   path: /metrics
   port: http
+
+# Shared RDS CA ConfigMap, provisioned separately in the release namespace.
+# Enabling this verifies server identity using /etc/rds-ca/global-bundle.pem.
+databaseTLS:
+  enabled: false
+  caConfigMapName: rds-ca

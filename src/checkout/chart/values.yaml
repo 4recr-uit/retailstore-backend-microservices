@@ -110,12 +110,8 @@ worker:
     type: ClusterIP
     port: 8080
     targetPort: 8080
-  nodeSelector:
-    karpenter.sh/nodepool: default
-  tolerations:
-    - key: "karpenter.sh/capacity-type"
-      operator: "Exists"
-      effect: "NoSchedule"
+  nodeSelector: {}
+  tolerations: []
   affinity: {}
   podAnnotations:
     prometheus.io/scrape: "true"
@@ -135,3 +131,9 @@ worker:
     scaleOnInFlight: "true"
     queueLength: "10"
     awsRegion: "us-east-1"
+
+# Shared RDS CA ConfigMap, provisioned separately in the release namespace.
+# Enabling this verifies server identity using /etc/rds-ca/global-bundle.pem.
+databaseTLS:
+  enabled: false
+  caConfigMapName: rds-ca

@@ -428,17 +428,27 @@ class TestPostgresRepositorySchema(unittest.TestCase):
     def test_postgres_repository_initialization(self):
         mock_engine = MagicMock()
         mock_conn = MagicMock()
-        mock_engine.begin.return_value.__enter__.return_value = mock_conn
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
 
         repo = PostgresCheckoutRepository(engine=mock_engine)
         self.assertEqual(repo.provider, "postgres")
 
-        # Verify SQL migration executed
-        mock_conn.execute.assert_called_once()
-        sql_called = str(mock_conn.execute.call_args[0][0])
-        self.assertIn("CREATE SCHEMA IF NOT EXISTS checkout", sql_called)
-        self.assertIn("CREATE TABLE IF NOT EXISTS checkout.checkout_sessions", sql_called)
-        self.assertIn("CREATE TABLE IF NOT EXISTS checkout.processed_jobs", sql_called)
+        # Startup must succeed with SELECT-only access and never run migration SQL.
+        queries = [str(call.args[0]) for call in mock_conn.execute.call_args_list]
+        self.assertEqual(len(queries), 2)
+        self.assertTrue(all(q.startswith("SELECT ") and q.endswith(" LIMIT 0") for q in queries))
+        self.assertIn("checkout.checkout_sessions", queries[0])
+        self.assertIn("checkout.processed_jobs", queries[1])
+        mock_engine.begin.assert_not_called()
+
+    def test_postgres_repository_rejects_missing_tables_or_permissions(self):
+        for reason in ("missing table", "missing column", "permission denied"):
+            with self.subTest(reason=reason):
+                engine = MagicMock()
+                engine.connect.return_value.__enter__.return_value.execute.side_effect = RuntimeError(reason)
+                with self.assertRaisesRegex(RuntimeError, "schema is not ready"):
+                    PostgresCheckoutRepository(engine)
+                engine.begin.assert_not_called()
 
     def test_get_session(self):
         mock_engine = MagicMock()
@@ -567,11 +577,11 @@ class TestPostgresRepositorySchema(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "PostgreSQL initialization failed"):
                     create_repository()
 
-        # Case 2: _init_db raises exception
+        # Case 2: existing-schema validation fails
         with patch.dict(os.environ, env, clear=True):
             with patch("app.repository.create_engine") as mock_ce:
                 mock_engine = MagicMock()
-                mock_engine.begin.side_effect = Exception("Migration failed")
+                mock_engine.connect.side_effect = Exception("Schema check failed")
                 mock_ce.return_value = mock_engine
                 with self.assertRaisesRegex(RuntimeError, "PostgreSQL initialization failed"):
                     create_repository()
