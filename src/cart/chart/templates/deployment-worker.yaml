@@ -6,7 +6,9 @@ metadata:
   labels:
     {{- include "carts.worker.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.worker.externalAutoscaling }}
   replicas: {{ .Values.worker.replicaCount }}
+  {{- end }}
   strategy:
     rollingUpdate:
       maxUnavailable: 1
@@ -28,7 +30,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "carts.serviceAccountName" . }}
+      serviceAccountName: {{ include "carts.workerServiceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
@@ -38,6 +40,12 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.Version }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- if .Values.databaseTLS.enabled }}
+            - name: DB_SSLMODE
+              value: "verify-full"
+            - name: DB_SSLROOTCERT
+              value: /etc/rds-ca/global-bundle.pem
+            {{- end }}
             - name: APP_MODE
               value: {{ .Values.worker.appMode | quote }}
             - name: WORKER_DB_MODE
@@ -51,10 +59,14 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "carts.configMapName" . }}
-            {{- if .Values.database.secret.create }}
             - secretRef:
                 name: {{ include "carts.secretName" . }}
-            {{- end }}
+          {{- if .Values.databaseTLS.enabled }}
+          volumeMounts:
+            - name: rds-ca
+              mountPath: /etc/rds-ca
+              readOnly: true
+          {{- end }}
           ports:
             - name: http
               containerPort: 8080
@@ -73,6 +85,15 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
+      {{- if .Values.databaseTLS.enabled }}
+      volumes:
+        - name: rds-ca
+          configMap:
+            name: {{ required "databaseTLS.caConfigMapName is required when TLS is enabled" .Values.databaseTLS.caConfigMapName | quote }}
+            items:
+              - key: global-bundle.pem
+                path: global-bundle.pem
+      {{- end }}
       {{- with .Values.worker.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

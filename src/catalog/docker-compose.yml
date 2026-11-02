@@ -15,12 +15,14 @@ services:
     environment:
       - GIN_MODE=release
       - reschedule=on-node-failure
-      - RETAIL_CATALOG_PERSISTENCE_PROVIDER=mysql
-      - RETAIL_CATALOG_PERSISTENCE_PASSWORD=${DB_PASSWORD:-test123}
-      - RETAIL_CATALOG_PERSISTENCE_ENDPOINT=catalog-db:3306
+      - RETAIL_CATALOG_PERSISTENCE_PROVIDER=${RETAIL_CATALOG_PERSISTENCE_PROVIDER:-mysql}
+      - RETAIL_CATALOG_PERSISTENCE_PASSWORD=${MYSQL_PASSWORD:-${DB_PASSWORD:-test123}}
+      - RETAIL_CATALOG_PERSISTENCE_ENDPOINT=${CATALOG_DB_ENDPOINT:-catalog-db:3306}
+      - RETAIL_CATALOG_PERSISTENCE_DB_NAME=${MYSQL_DATABASE:-catalogdb}
+      - RETAIL_CATALOG_PERSISTENCE_USER=${MYSQL_USER:-catalog_user}
       - RETAIL_CATALOG_SEARCH_ENABLED=${SEARCH_ENABLED:-false}
     ports:
-      - "8081:8080"
+      - "${CATALOG_PORT:-8081}:8080"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
       interval: 10s
@@ -40,23 +42,12 @@ services:
       - no-new-privileges:true
     environment:
       - reschedule=on-node-failure
-      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD:-test123}
-      - MYSQL_ALLOW_EMPTY_PASSWORD=true
-      - MYSQL_DATABASE=catalogdb
-      - MYSQL_USER=catalog_user
-      - MYSQL_PASSWORD=${DB_PASSWORD:-test123}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-${DB_PASSWORD:-test123}}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-catalogdb}
+      - MYSQL_USER=${MYSQL_USER:-catalog_user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-${DB_PASSWORD:-test123}}
     healthcheck:
-      test:
-        [
-          "CMD",
-          "mysqladmin",
-          "ping",
-          "-h",
-          "localhost",
-          "-u",
-          "catalog_user",
-          "-p${DB_PASSWORD:-test123}",
-        ]
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_PASSWORD\" mysql -h 127.0.0.1 -u \"$$MYSQL_USER\" \"$$MYSQL_DATABASE\" -e 'SELECT 1'"]
       interval: 10s
       timeout: 5s
       retries: 3

@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -155,7 +156,12 @@ func prepareContainer(ctx context.Context) (testcontainers.Container, string, er
 	req := testcontainers.ContainerRequest{
 		Image:        "mysql:8.0",
 		ExposedPorts: []string{"3306/tcp"},
-		WaitingFor:   wait.ForLog("3306"),
+		WaitingFor:   wait.ForListeningPort("3306/tcp"),
+		Files: []testcontainers.ContainerFile{{
+			HostFilePath:      filepath.Join("..", "..", "..", "database", "mysql", "setup.sql"),
+			ContainerFilePath: "/docker-entrypoint-initdb.d/01-catalog.sql",
+			FileMode:          0644,
+		}},
 		Env: map[string]string{
 			"MYSQL_ROOT_PASSWORD":        "unittest123",
 			"MYSQL_ALLOW_EMPTY_PASSWORD": "true",

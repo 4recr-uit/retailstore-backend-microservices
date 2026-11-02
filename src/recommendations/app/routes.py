@@ -49,6 +49,16 @@ def health() -> str:
     return "OK"
 
 
+@router.get("/ready", response_class=PlainTextResponse, tags=["system"])
+def ready(request: Request) -> PlainTextResponse:
+    try:
+        request.app.state.repository.check_ready()
+    except Exception:
+        logger.warning("Recommendations database is not ready")
+        return PlainTextResponse("Not ready", status_code=503)
+    return PlainTextResponse("OK")
+
+
 @router.get("/topology", tags=["system"])
 def topology(request: Request) -> dict[str, str]:
     cfg = getattr(request.app.state.repository, "config", {})

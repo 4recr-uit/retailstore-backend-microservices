@@ -80,6 +80,9 @@ app:
     database: "catalogdb"
 
     secret:
+      # Controls creation only. MySQL/search still reference this named Secret.
+      # With create=false, supply RETAIL_CATALOG_PERSISTENCE_USER and
+      # RETAIL_CATALOG_PERSISTENCE_PASSWORD for MySQL (plus search keys if enabled).
       create: true
       name: catalog-db
       username: catalog_user
@@ -162,3 +165,9 @@ podDisruptionBudget:
   enabled: false
   minAvailable: 2
   maxUnavailable: 1
+
+# Shared RDS CA ConfigMap, provisioned separately in the release namespace.
+# Enabling this verifies server identity using /etc/rds-ca/global-bundle.pem.
+databaseTLS:
+  enabled: false
+  caConfigMapName: rds-ca

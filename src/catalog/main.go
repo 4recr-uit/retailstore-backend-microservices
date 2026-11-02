@@ -144,6 +144,16 @@ func main() {
 	catalog.GET("/search", c.SearchProducts)
 	catalog.POST("/reindex", c.ReindexProducts)
 
+	r.GET("/ready", func(c *gin.Context) {
+		checker, ok := db.(interface{ Ping(context.Context) error })
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		if !ok || !chaosController.IsHealthy() || checker.Ping(ctx) != nil {
+			c.String(http.StatusServiceUnavailable, "Not ready")
+			return
+		}
+		c.String(http.StatusOK, "OK")
+	})
 	r.GET("/health", func(c *gin.Context) {
 		if !chaosController.IsHealthy() {
 			c.AbortWithError(503, fmt.Errorf("health check failed"))
@@ -191,7 +201,7 @@ func main() {
 
 	// The context is used to inform the server it has 5 seconds to finish
 	// the request it is currently handling
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.ShutdownTimeoutSeconds)*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatal("Server forced to shutdown:", err)

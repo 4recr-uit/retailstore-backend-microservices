@@ -10,10 +10,17 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-serviceAccount:
-  create: true
+# The infrastructure repo creates these accounts for EKS Pod Identity.
+# Set create=true only when this chart owns the corresponding account.
+apiServiceAccount:
+  create: false
   annotations: {}
-  name: ""
+  name: "checkout-api"
+
+workerServiceAccount:
+  create: false
+  annotations: {}
+  name: "checkout-worker"
 
 podSecurityContext:
   fsGroup: 1000
@@ -36,7 +43,10 @@ database:
   password: "postgrespassword"
   sslmode: "disable"
   secret:
+    # Controls creation only; API and worker always reference this Secret.
+    # With create=false, create it in the release namespace with key DB_PASSWORD.
     create: true
+    # If empty, defaults to <fullname>-db; DB_USER comes from database.user.
     name: "checkout-db"
 
 # SQS Configuration
@@ -80,6 +90,8 @@ api:
 
 # --- Worker Deployment (SQS Consumer / KEDA Scaled) ---
 worker:
+  # Omit spec.replicas when an external KEDA ScaledObject owns scaling.
+  externalAutoscaling: false
   enabled: true
   replicaCount: 0 # Scaled by KEDA (Scale-to-zero)
   appMode: "worker"
@@ -98,12 +110,8 @@ worker:
     type: ClusterIP
     port: 8080
     targetPort: 8080
-  nodeSelector:
-    karpenter.sh/nodepool: default
-  tolerations:
-    - key: "karpenter.sh/capacity-type"
-      operator: "Exists"
-      effect: "NoSchedule"
+  nodeSelector: {}
+  tolerations: []
   affinity: {}
   podAnnotations:
     prometheus.io/scrape: "true"
@@ -115,7 +123,7 @@ worker:
     path: /metrics
     port: http
   scaledObject:
-    enabled: true
+    enabled: false
     minReplicaCount: 0
     maxReplicaCount: 30
     pollingInterval: 5
@@ -123,3 +131,9 @@ worker:
     scaleOnInFlight: "true"
     queueLength: "10"
     awsRegion: "us-east-1"
+
+# Shared RDS CA ConfigMap, provisioned separately in the release namespace.
+# Enabling this verifies server identity using /etc/rds-ca/global-bundle.pem.
+databaseTLS:
+  enabled: false
+  caConfigMapName: rds-ca

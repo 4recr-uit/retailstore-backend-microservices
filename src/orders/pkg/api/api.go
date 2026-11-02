@@ -225,14 +225,21 @@ func (s *Server) handleCreateJob(c *gin.Context) {
 			})
 		}
 
-		_, err := s.sqsClient.SendMessageBatch(c.Request.Context(), &sqs.SendMessageBatchInput{
-			QueueUrl: aws.String(s.cfg.SQSQueueURL),
-			Entries:  entries,
-		})
+		accepted, err := worker.PublishBatch(c.Request.Context(), s.sqsClient, s.cfg.SQSQueueURL, entries)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to send SQS batch: %v", err)})
+			successfulJobs, failedJobs := make([]string, 0), make([]string, 0)
+			for i, id := range jobIDs {
+				if accepted[fmt.Sprintf("msg-%d", i)] {
+					successfulJobs = append(successfulJobs, id)
+				} else {
+					failedJobs = append(failedJobs, id)
+				}
+			}
+			metrics.SqsMessagesPublishedTotal.WithLabelValues(s.cfg.ServiceName, s.cfg.QueueName).Add(float64(len(successfulJobs)))
+			c.JSON(http.StatusBadGateway, gin.H{"status": "partial_failure", "count": len(successfulJobs), "jobIds": successfulJobs, "failedJobIds": failedJobs})
 			return
 		}
+
 	}
 
 	// Increment Prometheus counter

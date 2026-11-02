@@ -9,3 +9,7 @@ __pycache__
 .pytest_cache
 test_main.py
 .venv
+
+# Runtime configuration is supplied when the container starts.
+.env
+.env.*

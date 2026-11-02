@@ -6,6 +6,14 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 
+def env_int(name: str, default: int, minimum: int = 0) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+        return value if value >= minimum else default
+    except ValueError:
+        return default
+
+
 @dataclass
 class Settings:
     port: Optional[int] = None
@@ -33,6 +41,14 @@ class Settings:
     db_user: Optional[str] = None
     db_password: Optional[str] = None
     database_url: Optional[str] = None
+    db_sslmode: Optional[str] = None
+    db_sslrootcert: Optional[str] = None
+    db_connect_timeout: Optional[int] = None
+    db_pool_size: Optional[int] = None
+    db_max_overflow: Optional[int] = None
+    db_pool_timeout: Optional[int] = None
+    sqs_max_pool_connections: Optional[int] = None
+    worker_shutdown_timeout: Optional[int] = None
 
     def __post_init__(self):
         if self.port is None:
@@ -96,7 +112,7 @@ class Settings:
 
         # aws_default_region
         if self.aws_default_region is None:
-            object.__setattr__(self, "aws_default_region", os.getenv("AWS_DEFAULT_REGION", "us-east-1").strip())
+            object.__setattr__(self, "aws_default_region", (os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION", "")).strip())
 
         # shipping_name_prefix
         if self.shipping_name_prefix is None:
@@ -112,11 +128,26 @@ class Settings:
         if self.db_name is None:
             object.__setattr__(self, "db_name", os.getenv("RETAIL_CHECKOUT_PERSISTENCE_DB_NAME") or os.getenv("DB_NAME", "retaildb"))
         if self.db_user is None:
-            object.__setattr__(self, "db_user", os.getenv("RETAIL_CHECKOUT_PERSISTENCE_USER") or os.getenv("DB_USER", "postgres"))
+            object.__setattr__(self, "db_user", os.getenv("RETAIL_CHECKOUT_PERSISTENCE_USER") or os.getenv("DB_USER", ""))
         if self.db_password is None:
-            object.__setattr__(self, "db_password", os.getenv("RETAIL_CHECKOUT_PERSISTENCE_PASSWORD") or os.getenv("DB_PASSWORD", "postgres"))
+            object.__setattr__(self, "db_password", os.getenv("RETAIL_CHECKOUT_PERSISTENCE_PASSWORD") or os.getenv("DB_PASSWORD", ""))
         if self.database_url is None:
             object.__setattr__(self, "database_url", os.getenv("DATABASE_URL", "").strip())
+
+        if self.db_sslmode is None:
+            self.db_sslmode = os.getenv("DB_SSLMODE", "disable")
+        if self.db_sslrootcert is None:
+            self.db_sslrootcert = os.getenv("DB_SSLROOTCERT", "")
+        for field, variable, default, minimum in (
+            ("db_connect_timeout", "DB_CONNECT_TIMEOUT_SECONDS", 10, 1),
+            ("db_pool_size", "DB_POOL_SIZE", 2, 1),
+            ("db_max_overflow", "DB_MAX_OVERFLOW", 1, 0),
+            ("db_pool_timeout", "DB_POOL_TIMEOUT_SECONDS", 30, 1),
+            ("sqs_max_pool_connections", "SQS_MAX_POOL_CONNECTIONS", 50, 1),
+            ("worker_shutdown_timeout", "WORKER_SHUTDOWN_TIMEOUT_SECONDS", 5, 1),
+        ):
+            if getattr(self, field) is None:
+                setattr(self, field, env_int(variable, default, minimum))
 
         # persistence_provider
         raw_prov = self.persistence_provider if self.persistence_provider is not None else os.getenv("RETAIL_CHECKOUT_PERSISTENCE_PROVIDER", "")

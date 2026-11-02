@@ -1,0 +1,53 @@
+# =============================================================================
+# Retail Store — UI Overlay (docker-compose.ui.yml)
+# =============================================================================
+# Add the Spring Boot UI on top of the running backend stack.
+#
+# Usage (with backend already running or starting together):
+#   docker compose -f docker-compose.yml -f docker-compose.ui.yml up -d
+#
+# Usage (UI only, if backend is already up):
+#   docker compose -f docker-compose.yml -f docker-compose.ui.yml up -d ui
+#
+# The UI uses the internal Docker network to reach backend services by hostname.
+# =============================================================================
+
+services:
+  ui:
+    build:
+      context: src/ui
+    hostname: ui
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    environment:
+      JAVA_OPTS: "-XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/urandom"
+      SERVER_TOMCAT_ACCESSLOG_ENABLED: "true"
+      SPRING_PROFILES_ACTIVE: prod
+      RETAIL_UI_THEME: ${RETAIL_UI_THEME:-default}
+      RETAIL_UI_SEARCH_ENABLED: ${RETAIL_UI_SEARCH_ENABLED:-false}
+      RETAIL_UI_ENDPOINTS_CATALOG: http://catalog:8080
+      RETAIL_UI_ENDPOINTS_CARTS: http://carts:8080
+      RETAIL_UI_ENDPOINTS_ORDERS: http://orders:8080
+      RETAIL_UI_ENDPOINTS_CHECKOUT: http://checkout:8080
+      RETAIL_UI_ENDPOINTS_RECOMMENDATIONS: http://recommendations:8080
+    ports:
+      - "${UI_PORT:-8888}:8080"
+    depends_on:
+      catalog:
+        condition: service_healthy
+      cart:
+        condition: service_healthy
+      orders:
+        condition: service_healthy
+      checkout:
+        condition: service_healthy
+      recommendations:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 90s

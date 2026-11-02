@@ -1,11 +1,12 @@
 package config
 
 import (
-	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -15,14 +16,16 @@ type Config struct {
 	PodName     string // hostname / pod id
 
 	// DB
-	DBProvider  string // "in-memory" (default), "postgres"
-	DatabaseURL string // full postgres URL if provided
-	DBHost      string
-	DBPort      string
-	DBName      string
-	DBUser      string
-	DBPassword  string
-	DBSSLMode   string
+	DBProvider       string // "in-memory" (default), "postgres"
+	DatabaseURL      string // full postgres URL if provided
+	DBHost           string
+	DBPort           string
+	DBName           string
+	DBUser           string
+	DBPassword       string
+	DBSSLMode        string
+	DBSSLRootCert    string
+	DBConnectTimeout int
 
 	// Worker & SQS
 	SQSQueueURL       string
@@ -36,21 +39,23 @@ type Config struct {
 
 func LoadConfig() *Config {
 	cfg := &Config{
-		AppMode:        getEnv("APP_MODE", "api"),
-		Port:           getEnv("PORT", "8080"),
-		ServiceName:    "orders",
-		DBProvider:     getEnv("RETAIL_ORDERS_PERSISTENCE_PROVIDER", ""),
-		DatabaseURL:    os.Getenv("DATABASE_URL"),
-		DBHost:         getEnv("DB_HOST", os.Getenv("RETAIL_ORDERS_PERSISTENCE_ENDPOINT")),
-		DBPort:         getEnv("DB_PORT", "5432"),
-		DBName:         getEnv("DB_NAME", getEnv("RETAIL_ORDERS_PERSISTENCE_NAME", "retaildb")),
-		DBUser:         getEnv("DB_USER", getEnv("RETAIL_ORDERS_PERSISTENCE_USERNAME", "postgres")),
-		DBPassword:     getEnv("DB_PASSWORD", getEnv("RETAIL_ORDERS_PERSISTENCE_PASSWORD", "postgres")),
-		DBSSLMode:      getEnv("DB_SSLMODE", "disable"),
-		SQSQueueURL:    os.Getenv("SQS_QUEUE_URL"),
-		WorkerDBMode:   getEnv("WORKER_DB_MODE", "light"),
-		AWSRegion:      getEnv("AWS_REGION", getEnv("AWS_DEFAULT_REGION", "us-east-1")),
-		AWSEndpointURL: getEnv("AWS_ENDPOINT_URL", os.Getenv("AWS_ENDPOINT_URL_SQS")),
+		AppMode:          getEnv("APP_MODE", "api"),
+		Port:             getEnv("PORT", "8080"),
+		ServiceName:      getEnv("SERVICE_NAME", "orders"),
+		DBProvider:       getEnv("RETAIL_ORDERS_PERSISTENCE_PROVIDER", ""),
+		DatabaseURL:      os.Getenv("DATABASE_URL"),
+		DBHost:           getEnv("DB_HOST", os.Getenv("RETAIL_ORDERS_PERSISTENCE_ENDPOINT")),
+		DBPort:           getEnv("DB_PORT", "5432"),
+		DBName:           getEnv("DB_NAME", getEnv("RETAIL_ORDERS_PERSISTENCE_NAME", "retaildb")),
+		DBUser:           getEnv("DB_USER", getEnv("RETAIL_ORDERS_PERSISTENCE_USERNAME", "")),
+		DBPassword:       getEnv("DB_PASSWORD", getEnv("RETAIL_ORDERS_PERSISTENCE_PASSWORD", "")),
+		DBSSLMode:        getEnv("DB_SSLMODE", "disable"),
+		DBSSLRootCert:    os.Getenv("DB_SSLROOTCERT"),
+		DBConnectTimeout: int(EnvSeconds("DB_CONNECT_TIMEOUT_SECONDS", 10) / time.Second),
+		SQSQueueURL:      os.Getenv("SQS_QUEUE_URL"),
+		WorkerDBMode:     getEnv("WORKER_DB_MODE", "light"),
+		AWSRegion:        getEnv("AWS_REGION", getEnv("AWS_DEFAULT_REGION", "")),
+		AWSEndpointURL:   getEnv("AWS_ENDPOINT_URL", os.Getenv("AWS_ENDPOINT_URL_SQS")),
 	}
 
 	// Hostname / Pod name
@@ -89,7 +94,7 @@ func LoadConfig() *Config {
 	cfg.WorkerConcurrency = concurrency
 
 	// Derive QueueName
-	cfg.QueueName = "orders-queue"
+	cfg.QueueName = getEnv("SQS_QUEUE_NAME", "orders-queue")
 	if cfg.SQSQueueURL != "" {
 		if parsed, err := url.Parse(cfg.SQSQueueURL); err == nil {
 			parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
@@ -107,17 +112,25 @@ func (c *Config) PostgresConnString() string {
 		return c.DatabaseURL
 	}
 
-	host := c.DBHost
-	port := c.DBPort
-	if strings.Contains(host, ":") {
-		parts := strings.Split(host, ":")
-		host = parts[0]
-		port = parts[1]
+	host, port := c.DBHost, c.DBPort
+	if parsedHost, parsedPort, err := net.SplitHostPort(host); err == nil {
+		host, port = parsedHost, parsedPort
 	}
-
-	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		host, port, c.DBUser, c.DBPassword, c.DBName, c.DBSSLMode,
-	)
+	if port == "" {
+		port = "5432"
+	}
+	connection := url.URL{Scheme: "postgres", Host: net.JoinHostPort(host, port), Path: "/" + c.DBName, User: url.UserPassword(c.DBUser, c.DBPassword)}
+	options := url.Values{"sslmode": {c.DBSSLMode}}
+	timeout := c.DBConnectTimeout
+	if timeout <= 0 {
+		timeout = 10
+	}
+	options.Set("connect_timeout", strconv.Itoa(timeout))
+	if c.DBSSLRootCert != "" {
+		options.Set("sslrootcert", c.DBSSLRootCert)
+	}
+	connection.RawQuery = options.Encode()
+	return connection.String()
 }
 
 func getEnv(key, defaultVal string) string {

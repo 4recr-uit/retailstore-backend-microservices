@@ -19,11 +19,14 @@ COPY .mvn .mvn
 COPY mvnw .
 COPY pom.xml .
 
-RUN ./mvnw dependency:go-offline -B -q
+# Normalize existing Windows checkouts as well as fresh LF-only checkouts.
+RUN sed -i 's/\r$//' mvnw && \
+    chmod +x mvnw && \
+    ./mvnw dependency:go-offline -B
 
 COPY ./src ./src
 
-RUN ./mvnw -DskipTests package -q && \
+RUN ./mvnw -B -DskipTests package && \
     mv /target/ui-0.0.1-SNAPSHOT.jar /app.jar
 
 # Package Stage
@@ -67,7 +70,6 @@ ENV SPRING_PROFILES_ACTIVE=prod
 WORKDIR /app
 USER appuser
 
-COPY ./ATTRIBUTION.md ./LICENSES.md
 COPY --chown=appuser:appuser --from=build-env /app.jar .
 
 EXPOSE 8080

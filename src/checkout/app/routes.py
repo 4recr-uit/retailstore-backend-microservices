@@ -21,7 +21,7 @@ from app.models import (
     ShippingOption,
     ShippingRates,
 )
-from app.worker import SQSService, make_id
+from app.worker import BatchPublishError, SQSService, make_id
 
 api_router = APIRouter()
 
@@ -144,7 +144,8 @@ async def submit_checkout(customerId: str, request: Request):
     }
 
     sqs_svc: SQSService = request.app.state.sqs_service
-    await run_in_threadpool(sqs_svc.publish_single, msg)
+    if not await run_in_threadpool(sqs_svc.publish_single, msg):
+        raise HTTPException(status_code=503, detail="SQS queue is not configured")
 
     request.app.state.repository.delete_session(customerId)
 
@@ -197,10 +198,17 @@ async def create_jobs(job_req: JobRequest, request: Request):
             }
         )
 
-    if job_req.batchSize == 1:
-        await run_in_threadpool(sqs_svc.publish_single, messages[0])
-    else:
-        await run_in_threadpool(sqs_svc.publish_batch, messages)
+    try:
+        if job_req.batchSize == 1:
+            published = int(await run_in_threadpool(sqs_svc.publish_single, messages[0]))
+        else:
+            published = await run_in_threadpool(sqs_svc.publish_batch, messages)
+    except BatchPublishError as exc:
+        return JSONResponse(status_code=502, content={"status": "partial_failure",
+                            "enqueued": len(exc.successful_job_ids), "jobIds": exc.successful_job_ids,
+                            "failedJobIds": exc.failed_job_ids})
+    if published != job_req.batchSize:
+        raise HTTPException(status_code=503, detail="SQS queue is not configured")
 
     return {"enqueued": job_req.batchSize, "jobIds": job_ids}
 

@@ -1,10 +1,11 @@
 services:
   ui:
     environment:
-      - RETAIL_UI_ENDPOINTS_CATALOG=http://catalog:8080
-      - RETAIL_UI_ENDPOINTS_CARTS=http://carts:8080
-      - RETAIL_UI_ENDPOINTS_ORDERS=http://orders:8080
-      - RETAIL_UI_ENDPOINTS_CHECKOUT=http://checkout:8080
+      - RETAIL_UI_ENDPOINTS_CATALOG=${RETAIL_UI_ENDPOINTS_CATALOG:-http://catalog:8080}
+      - RETAIL_UI_ENDPOINTS_CARTS=${RETAIL_UI_ENDPOINTS_CARTS:-http://cart:8080}
+      - RETAIL_UI_ENDPOINTS_ORDERS=${RETAIL_UI_ENDPOINTS_ORDERS:-http://orders:8080}
+      - RETAIL_UI_ENDPOINTS_CHECKOUT=${RETAIL_UI_ENDPOINTS_CHECKOUT:-http://checkout:8080}
+      - RETAIL_UI_ENDPOINTS_RECOMMENDATIONS=${RETAIL_UI_ENDPOINTS_RECOMMENDATIONS:-http://recommendations:8080}
     depends_on:
       catalog:
         condition: service_healthy
@@ -18,10 +19,15 @@ services:
       checkout:
         condition: service_healthy
         restart: true
+      recommendations:
+        condition: service_healthy
+        restart: true
 
   catalog:
     ports: !override []
   cart:
+    ports: !override []
+  carts-db:
     ports: !override []
   orders:
     ports: !override []
@@ -29,9 +35,7 @@ services:
     ports: !override []
   checkout:
     ports: !override []
-    environment:
-      - RETAIL_CHECKOUT_ENDPOINTS_ORDERS=http://orders:8080
-  checkout-redis:
+  checkout-db:
     ports: !override []
-  rabbitmq:
+  recommendations:
     ports: !override []

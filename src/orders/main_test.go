@@ -22,6 +22,7 @@ import (
 
 // MockSQS implements worker.SQSClient
 type MockSQS struct {
+	BatchResponse        *sqs.SendMessageBatchOutput
 	mu                   sync.Mutex
 	Messages             []sqsTypes.Message
 	DeletedReceipts      []string
@@ -91,10 +92,17 @@ func (m *MockSQS) SendMessageBatch(ctx context.Context, params *sqs.SendMessageB
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.SentBatchCount += len(params.Entries)
+	if m.BatchResponse != nil {
+		return m.BatchResponse, nil
+	}
 	for _, entry := range params.Entries {
 		m.SentMessages = append(m.SentMessages, aws.ToString(entry.MessageBody))
 	}
-	return &sqs.SendMessageBatchOutput{}, nil
+	out := &sqs.SendMessageBatchOutput{}
+	for _, entry := range params.Entries {
+		out.Successful = append(out.Successful, sqsTypes.SendMessageBatchResultEntry{Id: entry.Id})
+	}
+	return out, nil
 }
 
 // Test CPU burn calibration
@@ -539,5 +547,30 @@ func TestServerWorkerMode(t *testing.T) {
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for POST /jobs in worker mode, got %d", w.Code)
+	}
+}
+
+func TestBatchAPIReportsConfirmedAndFailedJobs(t *testing.T) {
+	client := NewMockSQS()
+	client.BatchResponse = &sqs.SendMessageBatchOutput{Successful: []sqsTypes.SendMessageBatchResultEntry{{Id: aws.String("msg-0")}}, Failed: []sqsTypes.BatchResultErrorEntry{{Id: aws.String("msg-1"), SenderFault: true}}}
+	cfg := &config.Config{AppMode: "api", ServiceName: "orders", QueueName: "orders-queue", SQSQueueURL: "queue"}
+	router := api.NewServer(cfg, db.NewInMemoryRepository(), client).Engine()
+	req := httptest.NewRequest("POST", "/jobs", bytes.NewBufferString(`{"batchSize":2,"workUnits":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != 502 {
+		t.Fatalf("expected partial failure, got %d: %s", w.Code, w.Body.String())
+	}
+	var out struct {
+		Count  int      `json:"count"`
+		JobIDs []string `json:"jobIds"`
+		Failed []string `json:"failedJobIds"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Count != 1 || len(out.JobIDs) != 1 || len(out.Failed) != 1 {
+		t.Fatalf("incorrect confirmed count: %+v", out)
 	}
 }

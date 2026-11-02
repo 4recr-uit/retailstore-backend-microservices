@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: MIT-0
 
 import logging
+import ssl
 from typing import Any, Protocol
-from urllib.parse import quote_plus
+from urllib.parse import quote
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -84,6 +85,9 @@ class BaseRecommendationRepository(Protocol):
 
 
 class InMemoryRecommendationRepository:
+    def check_ready(self) -> None:
+        pass
+
     def __init__(self, config: dict[str, Any], products: list[dict[str, Any]] | None = None) -> None:
         self.config = config
         self.provider = "in-memory"
@@ -111,24 +115,34 @@ class InMemoryRecommendationRepository:
 
 
 class MySQLRecommendationRepository:
+    def check_ready(self) -> None:
+        # Verify connectivity, schema and runtime SELECT permissions without fetching data.
+        with self.engine.connect() as conn:
+            conn.execute(text("SELECT id FROM products LIMIT 0"))
+            conn.execute(text("SELECT product_id, tag_name FROM product_tags LIMIT 0"))
+
     def __init__(self, config: dict[str, Any], engine: Engine | None = None) -> None:
         self.config = config
         self.provider = "mysql"
         if engine is not None:
             self.engine = engine
         else:
-            user = quote_plus(config["db_user"])
-            password = quote_plus(config["db_password"])
+            user = quote(config["db_user"], safe="")
+            password = quote(config["db_password"], safe="")
             endpoint = config["endpoint"]
             db_name = config["db_name"]
             url = f"mysql+pymysql://{user}:{password}@{endpoint}/{db_name}?charset=utf8mb4"
+            connect_args = {"connect_timeout": config.get("connect_timeout", 5)}
+            if config.get("tls") or config.get("ssl_ca"):
+                connect_args["ssl"] = ssl.create_default_context(cafile=config.get("ssl_ca") or None)
             self.engine = create_engine(
                 url,
-                pool_size=3,
-                max_overflow=2,
+                pool_size=config.get("pool_size", 3),
+                max_overflow=config.get("max_overflow", 2),
                 pool_pre_ping=True,
-                pool_recycle=1800,
-                connect_args={"connect_timeout": config.get("connect_timeout", 5)},
+                pool_recycle=config.get("pool_recycle", 1800),
+                pool_timeout=config.get("pool_timeout", 30),
+                connect_args=connect_args,
             )
             logger.info("Initialized MySQL repository targeting %s/%s", endpoint, db_name)
 
@@ -187,3 +201,6 @@ class RecommendationsRepository:
 
     def get_recommendations(self, product_id: str) -> list[Recommendation] | None:
         return self._impl.get_recommendations(product_id)
+
+    def check_ready(self) -> None:
+        self._impl.check_ready()
