@@ -20,6 +20,7 @@ type mockSQSClient struct {
 	messages          []sqsTypes.Message
 	deleted           []string
 	visibilityChanged []string
+	completed         chan string
 }
 
 func (m *mockSQSClient) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error) {
@@ -28,8 +29,12 @@ func (m *mockSQSClient) ReceiveMessage(ctx context.Context, params *sqs.ReceiveM
 	if len(m.messages) == 0 {
 		return &sqs.ReceiveMessageOutput{Messages: []sqsTypes.Message{}}, nil
 	}
-	msgs := m.messages
-	m.messages = nil
+	n := len(m.messages)
+	if params.MaxNumberOfMessages > 0 && n > int(params.MaxNumberOfMessages) {
+		n = int(params.MaxNumberOfMessages)
+	}
+	msgs := m.messages[:n]
+	m.messages = m.messages[n:]
 	return &sqs.ReceiveMessageOutput{Messages: msgs}, nil
 }
 
@@ -37,6 +42,9 @@ func (m *mockSQSClient) DeleteMessage(ctx context.Context, params *sqs.DeleteMes
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.deleted = append(m.deleted, aws.ToString(params.ReceiptHandle))
+	if m.completed != nil {
+		m.completed <- aws.ToString(params.ReceiptHandle)
+	}
 	return &sqs.DeleteMessageOutput{}, nil
 }
 
@@ -53,6 +61,65 @@ func (m *mockSQSClient) SendMessage(ctx context.Context, params *sqs.SendMessage
 
 func (m *mockSQSClient) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBatchInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageBatchOutput, error) {
 	return &sqs.SendMessageBatchOutput{}, nil
+}
+
+func TestWorkerProcessesSuccessiveBatches(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		batchSize   int
+		concurrency int
+	}{
+		{name: "single message", batchSize: 1, concurrency: 1},
+		{name: "parallel batch", batchSize: 2, concurrency: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mockSQSClient{completed: make(chan string, 5)}
+			for _, id := range []string{"job1", "job2", "job3", "job4", "job5"} {
+				body, err := json.Marshal(JobMessage{JobID: id, DBMode: "none"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				client.messages = append(client.messages, sqsTypes.Message{
+					MessageId: aws.String(id), ReceiptHandle: aws.String(id), Body: aws.String(string(body)),
+				})
+			}
+			cfg := &config.Config{
+				ServiceName: "orders", QueueName: "orders-queue", PodName: "batch-regression",
+				SQSQueueURL: "http://localhost/orders-queue", SQSMaxMessages: tc.batchSize,
+				WorkerConcurrency: tc.concurrency, WorkerDBMode: "none",
+			}
+			w := NewWorker(cfg, db.NewInMemoryRepository(), client)
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				w.Start(ctx)
+			}()
+			t.Cleanup(func() {
+				cancel()
+				w.Stop()
+				select {
+				case <-done:
+				case <-time.After(2 * time.Second):
+					t.Error("worker failed to stop")
+				}
+			})
+			seen := make(map[string]bool)
+			deadline := time.NewTimer(2 * time.Second)
+			defer deadline.Stop()
+			for len(seen) < 5 {
+				select {
+				case id := <-client.completed:
+					if seen[id] {
+						t.Fatalf("job %s processed twice", id)
+					}
+					seen[id] = true
+				case <-deadline.C:
+					t.Fatalf("worker stopped polling after completing %d of 5 messages", len(seen))
+				}
+			}
+		})
+	}
 }
 
 func TestWorkerUnstartedMessagesVisibilityReset(t *testing.T) {

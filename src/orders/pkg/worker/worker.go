@@ -150,6 +150,9 @@ func (w *Worker) processBatch(ctx context.Context, msgs []sqsTypes.Message) {
 	for _, m := range msgs {
 		batchChan <- m
 	}
+	// No more messages will be added to this batch. Closing before waiting lets
+	// workers exit after consuming it, so Start can poll the next batch.
+	close(batchChan)
 
 	workersCount := w.concurrency
 	if workersCount > nMsgs {
@@ -185,7 +188,6 @@ func (w *Worker) processBatch(ctx context.Context, msgs []sqsTypes.Message) {
 	wg.Wait()
 
 	// Drain any unhandled messages left in batchChan (messages not started before shutdown)
-	close(batchChan)
 	for msg := range batchChan {
 		w.returnMessageToQueue(msg)
 	}
